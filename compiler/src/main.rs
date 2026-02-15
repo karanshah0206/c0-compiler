@@ -1,18 +1,24 @@
 mod args;
+mod front;
+
+use logos::Logos;
+use std::fs;
+
+use crate::front::lex::Token;
 
 fn main() {
   let config = args::parse_args();
 
-  // Testing configurations
-  println!("Verbose: {}", config.verbose);
-  println!("Check: {}", config.check);
-  println!("Optimizer level: {}", config.optimizer_level);
-  println!(
-    "Target: {}",
-    match config.target {
-      args::EmitTarget::Abstract => "abstract",
-      args::EmitTarget::X86_64 => "x86-64",
+  // Testing the lexical analyzer
+  let file_name = config.file.unwrap();
+  let file_str = fs::read_to_string(file_name).expect("Could not read file");
+  let token_stream = Token::lexer(&file_str).spanned().map(|(t, y)| (y.start, t, y.end));
+
+  for token in token_stream {
+    if let Err(_) = token.1 {
+      println!("Lexer failed");
+    } else {
+      println!("{} {} {}", token.0, token.1.unwrap(), token.2);
     }
-  );
-  println!("File: {}", config.file.unwrap_or("No file provided".to_string()));
+  }
 }

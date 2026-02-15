@@ -5,3 +5,4 @@ authors = ["Karan Manoj Shah <kmshah2@cs.cmu.edu>"]
 edition = "2024"
 
 [dependencies]
+logos = "0.16.1"
