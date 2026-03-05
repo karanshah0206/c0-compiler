@@ -139,11 +139,18 @@ pub enum Token<'a> {
   For,
   #[token("return")]
   Return,
+  #[token("assert")]
+  Assert,
 
   #[token("int")]
   Int,
   #[token("bool")]
   Bool,
+  #[token("void")]
+  Void,
+
+  #[token("typedef")]
+  Typedef,
 
   #[regex("[A-Za-z][A-Za-z0-9_]*")]
   Ident(&'a str),
