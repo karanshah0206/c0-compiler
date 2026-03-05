@@ -5,4 +5,8 @@ authors = ["Karan Manoj Shah <kmshah2@cs.cmu.edu>"]
 edition = "2024"
 
 [dependencies]
+lalrpop-util = "0.23.0"
 logos = "0.16.1"
+
+[build-dependencies]
+lalrpop = "0.23.0"
