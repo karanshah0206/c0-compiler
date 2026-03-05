@@ -36,9 +36,9 @@ fn skip_block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip 
 #[logos(skip r"[ \n\r\t\f\v]+")]
 pub enum Token<'a> {
   #[token("(")]
-  LParan,
+  LParen,
   #[token(")")]
-  RParan,
+  RParen,
   #[token("{")]
   LBrace,
   #[token("}")]

@@ -25,7 +25,7 @@ pub enum GlobalDeclaration {
   /// Function definition (type, identifier, parameters, body)
   FDefn(Typ, Ident, Vec<Param>, Stmt),
   /// Type definition (underlying type, alias)
-  TypeDef(Typ, Ident),
+  Typedef(Typ, Ident),
 }
 
 /// Local statement.
@@ -42,10 +42,10 @@ pub enum Stmt {
   Seq(Box<Stmt>, Box<Stmt>),
   /// Conditional (bool expression, if-branch, else-branch)
   Cond(Expr, Box<Stmt>, Box<Stmt>),
-  /// Loop (bool expression, loop body)
-  Loop(Expr, Box<Stmt>),
-  /// For loop
-  For(Box<Stmt>, Expr, Box<Stmt>, Box<Stmt>),
+  /// While loop (bool expression, loop body)
+  While(Expr, Box<Stmt>),
+  /// For loop (init, boolean expr, step, body)
+  For(Option<Stmt>, Expr, Option<Stmt>, Box<Stmt>),
   /// Block of ordered statements
   Block(Vec<Stmt>),
   /// Return
@@ -54,35 +54,39 @@ pub enum Stmt {
   Expr(Expr),
   /// Assertion (bool expression)
   Assert(Expr),
-  /// No Operation/empty statement
+  /// No operation/empty statement
   NoOp(),
 }
 
 #[derive(Clone)]
 /// Expression tree.
-/// For expressions with types, the type is determined during semantic analysis.
-/// Parser should set the type to `None`.
+/// For non-immediates, type is determined during semantic analysis. Parser should set type to `None`.
 pub enum Expr {
+  /// Numeric immediate
   Number(i32),
+  /// Boolean immediate
   Bool(bool),
+  /// Variable identifier
   Variable(Ident, Option<Typ>),
+  /// Binary operation (lhs, operator, rhs, type)
   Binop(Box<Expr>, BinOp, Box<Expr>, Option<Typ>),
+  /// Unary operator (operator, operand, type)
   Unop(UnOp, Box<Expr>, Option<Typ>),
+  /// Ternary operator (boolean expr, if-expr, else-expr, type)
   Ternop(Box<Expr>, Box<Expr>, Box<Expr>, Option<Typ>),
+  /// Function call (identifier, arguments list, type)
   Call(Ident, Vec<Box<Expr>>, Option<Typ>),
 }
 
 impl Expr {
   /// Get the type produced as result of computing this expression.
-  pub fn get_type(&self) -> Typ {
+  pub fn get_type(&self) -> Option<Typ> {
     use Expr::*;
 
     match self {
-      Number(_) => Typ::Int,
-      Bool(_) => Typ::Bool,
-      Variable(_, typ) | Binop(_, _, _, typ) | Unop(_, _, typ) | Ternop(_, _, _, typ) | Call(_, _, typ) => {
-        typ.clone().expect("Type not computed yet.")
-      }
+      Number(_) => Some(Typ::Int),
+      Bool(_) => Some(Typ::Bool),
+      Variable(_, typ) | Binop(_, _, _, typ) | Unop(_, _, typ) | Ternop(_, _, _, typ) | Call(_, _, typ) => *typ,
     }
   }
 }
@@ -101,41 +105,41 @@ pub enum UnOp {
 #[derive(Copy, Clone, PartialEq, Eq)]
 /// Binary operators.
 pub enum BinOp {
-  /// Arithmetic add
+  /// Arithmetic add (+)
   Add,
-  /// Arithmetic subtract
+  /// Arithmetic subtract (-)
   Sub,
-  /// Arithmetic multiply
+  /// Arithmetic multiply (*)
   Mul,
-  /// Arithmetic divide
+  /// Arithmetic divide (/)
   Div,
-  /// Arithmetic remainder/modulo
+  /// Arithmetic remainder/modulo (%)
   Mod,
-  /// Bitwise AND
+  /// Bitwise AND (&)
   And,
-  /// Bitwise Exclusive OR
+  /// Bitwise Exclusive OR (^)
   Xor,
-  /// Bitwise OR
+  /// Bitwise OR (|)
   Or,
-  /// Arithmetic left-shift
+  /// Arithmetic left-shift (<<)
   Sal,
-  /// Arithmetic right-shift
+  /// Arithmetic right-shift (>>)
   Sar,
-  /// Logical AND
+  /// Logical AND (&&)
   LAnd,
-  /// Logical OR
+  /// Logical OR (||)
   LOr,
-  /// Compare equality
+  /// Compare equality (==)
   CmpEq,
-  /// Compare inequality
+  /// Compare inequality (!=)
   CmpNeq,
-  /// Compare less-than
+  /// Compare less-than (<)
   Lt,
-  /// Compare greater-than
+  /// Compare greater-than (>)
   Gt,
-  /// Compare less-than-equal
+  /// Compare less-than-equal (<=)
   Lte,
-  /// COmpare greater-than-equal
+  /// Compare greater-than-equal (>=)
   Gte,
 }
 
@@ -163,16 +167,27 @@ impl PostOp {
 #[derive(Copy, Clone, PartialEq, Eq)]
 /// Assignment operators.
 pub enum AsnOp {
+  /// =
   Equal,
+  /// +=
   Plus,
+  /// -=
   Minus,
+  /// *=
   Times,
+  /// /=
   Div,
+  /// %=
   Mod,
+  /// &=
   And,
+  /// ^=
   Xor,
+  /// |=
   Or,
+  /// <<=
   Sal,
+  /// \>>=
   Sar,
 }
 
