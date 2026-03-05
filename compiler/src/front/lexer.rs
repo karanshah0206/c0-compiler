@@ -32,7 +32,7 @@ fn skip_block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip 
   logos::Skip
 }
 
-#[derive(Debug, PartialEq, Logos)]
+#[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(skip r"[ \n\r\t\f\v]+")]
 pub enum Token<'a> {
   #[token("(")]

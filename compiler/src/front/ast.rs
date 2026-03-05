@@ -33,7 +33,7 @@ pub enum Stmt {
   /// Variable declaration
   Decl(Typ, Ident),
   /// Variable definition
-  Def(Typ, Ident, Expr),
+  Defn(Typ, Ident, Expr),
   /// Variable assignment
   Asgn(Ident, AsnOp, Expr),
   /// Post-operator (++/--
@@ -45,7 +45,7 @@ pub enum Stmt {
   /// While loop (bool expression, loop body)
   While(Expr, Box<Stmt>),
   /// For loop (init, boolean expr, step, body)
-  For(Option<Stmt>, Expr, Option<Stmt>, Box<Stmt>),
+  For(Box<Option<Stmt>>, Expr, Box<Option<Stmt>>, Box<Stmt>),
   /// Block of ordered statements
   Block(Vec<Stmt>),
   /// Return
@@ -86,7 +86,11 @@ impl Expr {
     match self {
       Number(_) => Some(Typ::Int),
       Bool(_) => Some(Typ::Bool),
-      Variable(_, typ) | Binop(_, _, _, typ) | Unop(_, _, typ) | Ternop(_, _, _, typ) | Call(_, _, typ) => *typ,
+      Variable(_, typ)
+      | Binop(_, _, _, typ)
+      | Unop(_, _, typ)
+      | Ternop(_, _, _, typ)
+      | Call(_, _, typ) => typ.clone(),
     }
   }
 }
