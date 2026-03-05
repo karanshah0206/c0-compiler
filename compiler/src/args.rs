@@ -12,7 +12,8 @@ pub struct Config {
   pub check: bool,
   pub optimizer_level: u8,
   pub target: EmitTarget,
-  pub file: Option<String>,
+  pub header: Option<String>,
+  pub source: Option<String>,
 }
 
 impl Config {
@@ -22,7 +23,8 @@ impl Config {
       check: false,
       optimizer_level: 0,
       target: EmitTarget::Abstract,
-      file: None,
+      header: None,
+      source: None,
     }
   }
 }
@@ -35,7 +37,7 @@ pub fn parse_args() -> Config {
   while index < args.len() {
     match args[index].as_str() {
       "-v" | "--verbose" => config.verbose = true,
-      "-c" | "--check" => config.check = true,
+      "-t" | "--typecheck-only" => config.check = true,
       arg if arg.starts_with("-O") => {
         if arg == "-O" {
           config.optimizer_level = 1;
@@ -43,7 +45,7 @@ pub fn parse_args() -> Config {
           config.optimizer_level = arg[2..].parse::<u8>().expect("Invalid optimization level")
         }
       }
-      "-t" | "--target" => {
+      "-e" | "--emit" => {
         if index + 1 < args.len() {
           match args[index + 1].as_str() {
             "abs" => config.target = EmitTarget::Abstract,
@@ -55,19 +57,29 @@ pub fn parse_args() -> Config {
           panic!("Expected target");
         }
       }
+      "-eabs" => config.target = EmitTarget::Abstract,
+      "-ex86-64" => config.target = EmitTarget::X86_64,
+      "-l" | "--link" => {
+        if index + 1 < args.len() {
+          config.header = Some(args[index + 1].clone());
+          index += 1;
+        } else {
+          panic!("Expected header file");
+        }
+      }
       file => {
         if let Some('-') = file.chars().next() {
           panic!("Unknown flag {}", file);
         } else {
-          config.file = Some(file.to_string());
+          config.source = Some(file.to_string());
         }
       }
     };
     index += 1;
   }
 
-  if config.file.is_none() {
-    panic!("Expected file input");
+  if config.source.is_none() {
+    panic!("Expected source file");
   }
 
   config
