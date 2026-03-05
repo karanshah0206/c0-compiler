@@ -1,0 +1,420 @@
+grammar<'input>;
+
+use crate::front::ast::*;
+use lalrpop_util::ParseError;
+use crate::front::lexer::Token;
+
+extern {
+  type Location = usize;
+
+  /// Lexical tokens used in parsing
+  enum Token<'input> {
+    "{" => Token::LBrace,
+    "}" => Token::RBrace,
+    "(" => Token::LParen,
+    ")" => Token::RParen,
+    ";" => Token::Semicolon,
+    "," => Token::Comma,
+    ":" => Token::Colon,
+    "?" => Token::Question,
+    "=" => Token::Equal,
+    "+" => Token::Plus,
+    "-" => Token::Hyphen,
+    "*" => Token::Asterisk,
+    "/" => Token::FSlash,
+    "%" => Token::Percent,
+    "&" => Token::Ampersand,
+    "|" => Token::Pipe,
+    "^" => Token::Caret,
+    "~" => Token::Tilde,
+    "!" => Token::Bang,
+    "<" => Token::Lt,
+    ">" => Token::Gt,
+
+    "++" => Token::PlusPlus,
+    "--" => Token::HyphenHyphen,
+    "&&" => Token::AmpersandAmpersand,
+    "||" => Token::PipePipe,
+    "<<" => Token::LtLt,
+    ">>" => Token::GtGt,
+    "==" => Token::EqualEqual,
+    "+=" => Token::PlusEqual,
+    "-=" => Token::HyphenEqual,
+    "*=" => Token::AsteriskEqual,
+    "/=" => Token::FSlashEqual,
+    "%=" => Token::PercentEqual,
+    "&=" => Token::AmpersandEqual,
+    "|=" => Token::PipeEqual,
+    "^=" => Token::CaretEqual,
+    "!=" => Token::BangEqual,
+    "<=" => Token::LtEqual,
+    ">=" => Token::GtEqual,
+
+    "<<=" => Token::LtLtEqual,
+    ">>=" => Token::GtGtEqual,
+
+    "true" => Token::True,
+    "false" => Token::False,
+    "number" => Token::Number(<i64>),
+    "ident" => Token::Ident(<&'input str>),
+
+    "void" => Token::Void,
+    "int" => Token::Int,
+    "bool" => Token::Bool,
+    "typedef" => Token::Typedef,
+
+    "if" => Token::If,
+    "else" => Token::Else,
+    "while" => Token::While,
+    "for" => Token::For,
+    "return" => Token::Return,
+    "assert" => Token::Assert,
+  }
+}
+
+/// The program is a collection of global declarations
+pub Program : Program = {
+  <g : GDecl*> => g,
+};
+
+/// Global declarations
+GDecl : GlobalDeclaration = {
+  <g : FDecl> => <>,
+  <g : FDefn> => <>,
+  <g : Typedef> => <>,
+};
+
+/// Function declaration
+FDecl : GlobalDeclaration = {
+  <t : Type> <i : Ident> <p : ParamList> ";" => GlobalDeclaration::FDecl(t, i, p),
+};
+
+/// Function definition
+FDefn : GlobalDeclaration = {
+  <t : Type> <i : Ident> <p : ParamList> <b : Block> => GlobalDeclaration::FDefn(t, i, p, b),
+};
+
+/// Type definition
+Typedef : GlobalDeclaration = {
+  "typedef" <t : Type> <i : Ident> ";" => GlobalDeclaration::Typedef(t, i),
+};
+
+/// Types
+Type : Typ = {
+  "void" => Typ::Void,
+  "int" => Typ::Int,
+  "bool" => Typ::Bool,
+  <i : Ident> => Typ::Typedef(i),
+};
+
+/// Numeric immediate
+Number : i64 = {
+  <n : "number"> => n,
+};
+
+/// Boolean immediate
+Boolean : bool = {
+  "true" => true,
+  "false" => false,
+};
+
+/// Identifier
+Ident : String = {
+  <i : "ident"> => i.to_owned(),
+};
+
+/// Function parameter list
+ParamList : Vec<Param> = {
+  "(" ")" => vec![],
+  "(" <p : Param> <pf : ParamFollow*> ")" => std::iter::once(p).chain(pf.into_iter()).collect::<Vec<Param>>(),
+};
+
+/// Function parameter
+Param : Param = {
+  <t : Type> <i : Ident> => (t, i),
+};
+
+/// Function parameter following a previous one
+ParamFollow : Param = {
+  "," <p : Param> => p,
+};
+
+/// Statement
+Stmt : Stmt = {
+  <s : Matched> => <>,
+  <s : Unmatched> => <>,
+};
+
+/// Statements that don't suffer from dangling else
+Matched : Stmt = {
+  <s : Simp> ";" => <>,
+  <b : Block> => <>,
+  "while" "(" <e : Expr> ")" <m : Matched> => Stmt::While(e, Box::new(m)),
+  "for" "(" <i : Simp?> ";" <e : Expr> ";" <s : SimpNoDecl?> ")" <m : Matched> => Stmt::For(Box::new(i), e, Box::new(s), Box::new(m)),
+  "return" <e : Expr?> ";" => Stmt::Ret(e),
+  "if" "(" <e : Expr> ")" <m1 : Matched> "else" <m2 : Matched> => Stmt::Cond(e, Box::new(m1), Box::new(m2)),
+  "assert" "(" <e : Expr> ")" ";" => Stmt::Assert(e),
+};
+
+/// Statements that suffer from dangling else
+Unmatched : Stmt = {
+  "if" "(" <e : Expr> ")" <s : Stmt> => Stmt::Cond(e, Box::new(s), Box::new(Stmt::NoOp())),
+  "if" "(" <e : Expr> ")" <m : Matched> "else" <u : Unmatched> => Stmt::Cond(e, Box::new(m), Box::new(u)),
+  "while" "(" <e : Expr> ")" <u : Unmatched> => Stmt::While(e, Box::new(u)),
+  "for" "(" <i : Simp?> ";" <e : Expr> ";" <s : SimpNoDecl?> ")" <u : Unmatched> => Stmt::For(Box::new(i), e, Box::new(s), Box::new(u)),
+};
+
+/// An ordered block of statements
+Block : Stmt = {
+  "{" <s : Stmt*> "}" => Stmt::Block(s),
+};
+
+/// New variable declaration
+Decl : Stmt = {
+  <t : Type> <i : Ident> => Stmt::Decl(t, i),
+  <t : Type> <i : Ident> "=" <e : Expr> => Stmt::Defn(t, i, e),
+};
+
+/// Simple statements
+Simp : Stmt = {
+  <s : SimpNoDecl> => <>,
+  <d : Decl> => <>,
+};
+
+/// Simple statements that don't result in new variable declarations
+SimpNoDecl : Stmt = {
+  <l : Expr> <o : AsnOp> <e : Expr> =>? match l {
+    Expr::Variable(v, _) => Ok(Stmt::Asgn(v, o, e)),
+    _ => Err(ParseError::User { error: "Invalid l-value in assignment" }),
+  },
+  <l : Expr> <o : PostOp> =>? match l {
+    Expr::Variable(v, _) => Ok(Stmt::PostOp(v, o)),
+    _ => Err(ParseError::User { error: "Invalid l-value in post-op" }),
+  },
+  <e : Expr> => Stmt::Expr(e),
+};
+
+// ############### Expressions ###############
+Expr: Expr = {
+  <c:LOr> "?" <i:Expr> ":" <e:Expr> => Expr::Ternop(Box::new(c), Box::new(i), Box::new(e), None),
+  <e:LOr> => e,
+}
+
+// Expression over a logical OR
+LOr: Expr = {
+  <l:LAnd> <rest:(LOrOp LAnd)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over a logical AND
+LAnd: Expr = {
+  <l:BOr> <rest:(LAndOp BOr)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over a bitwise OR
+BOr: Expr = {
+  <l:BXor> <rest:(BOrOp BXor)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over a bitwise XOR
+BXor: Expr = {
+  <l:BAnd> <rest:(BXorOp BAnd)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over bitwise AND
+BAnd: Expr = {
+  <l:Eq> <rest:(BAndOp Eq)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over (in)equality
+Eq: Expr = {
+  <l:Rel> <rest:(EqOp Rel)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over relative ordering comparators
+Rel: Expr = {
+  <l:Shift> <rest:(RelOp Shift)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over arithmetic shift
+Shift: Expr = {
+  <l:Add> <rest:(ShiftOp Add)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over arithmetic add/sub
+Add: Expr = {
+  <l:Mul> <rest:(AddOp Mul)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over arithmetic mul/div/mod
+Mul: Expr = {
+  <l:Unary> <rest:(MulOp Unary)*> => {
+    let mut expr = l;
+    for (op, rhs) in rest {
+      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
+    }
+    expr
+  },
+}
+
+// Expression over a unary
+Unary: Expr = {
+  <o:UnOp> <e:Unary> => match (o,&e) {
+    (UnOp::Neg, Expr::Number(a)) => Expr::Number((-1 * (*a as i64)) as i32),
+    (UnOp::Not, Expr::Number(a)) => Expr::Number((!(*a as i64)) as i32),
+    (UnOp::LNot, Expr::Bool(a)) => Expr::Bool(!a),
+    _ => Expr::Unop(o, Box::new(e), None),
+  },
+  <e:Primary> => e,
+}
+
+// Leaves in an expression
+Primary : Expr = {
+  "(" <Expr> ")" => <>,
+  <n:Number> => Expr::Number(n as i32),
+  <b:Boolean> => Expr::Bool(b),
+  <v:Ident> => Expr::Variable(v, None),
+  <c:Call> => c,
+}
+
+// Expression for a function call
+Call : Expr = {
+  <i: Ident> "(" ")"=> Expr::Call(i, vec![], None),
+  <i: Ident> "(" <e: Expr> <af: ArgFollow*> ")" => Expr::Call(
+    i,
+    std::iter::once(Box::new(e)).chain(af.into_iter()).collect::<Vec<Box<Expr>>>(),
+    None
+  ),
+}
+
+// Arguments following the first one in an function call
+ArgFollow : Box<Expr> = {
+  "," <e: Expr> => Box::new(e),
+}
+
+// ############### Operations ###############
+LOrOp: BinOp = {
+  "||" => BinOp::LOr,
+}
+
+LAndOp: BinOp = {
+  "&&" => BinOp::LAnd,
+}
+
+BOrOp: BinOp = {
+  "|" => BinOp::Or,
+}
+
+BXorOp: BinOp = {
+  "^" => BinOp::Xor,
+}
+
+BAndOp: BinOp = {
+  "&" => BinOp::And,
+}
+
+EqOp: BinOp = {
+  "==" => BinOp::CmpEq,
+  "!=" => BinOp::CmpNeq,
+}
+
+RelOp: BinOp = {
+  "<" => BinOp::Lt,
+  ">" => BinOp::Gt,
+  "<=" => BinOp::Lte,
+  ">=" => BinOp::Gte,
+}
+
+ShiftOp: BinOp = {
+  "<<" => BinOp::Sal,
+  ">>" => BinOp::Sar,
+}
+
+AddOp: BinOp = {
+  "+" => BinOp::Add,
+  "-" => BinOp::Sub,
+}
+
+MulOp: BinOp = {
+  "*" => BinOp::Mul,
+  "/" => BinOp::Div,
+  "%" => BinOp::Mod,
+}
+
+UnOp: UnOp = {
+  "-" => UnOp::Neg,
+  "~" => UnOp::Not,
+  "!" => UnOp::LNot,
+}
+
+PostOp: PostOp = {
+  "++" => PostOp::Inc,
+  "--" => PostOp::Dec,
+}
+
+AsnOp: AsnOp = {
+  "=" => AsnOp::Equal,
+  "+=" => AsnOp::Plus,
+  "-=" => AsnOp::Minus,
+  "*=" => AsnOp::Times,
+  "/=" => AsnOp::Div,
+  "%=" => AsnOp::Mod,
+  "&=" => AsnOp::And,
+  "^=" => AsnOp::Xor,
+  "|=" => AsnOp::Or,
+  "<<=" => AsnOp::Sal,
+  ">>=" => AsnOp::Sar,
+}
