@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 mod args;
+mod common;
 mod front;
 
 use logos::Logos;
