@@ -48,6 +48,8 @@ pub enum Token<'a> {
   Tilde,
   #[token(":")]
   Colon,
+  #[token(",")]
+  Comma,
   #[token(";")]
   Semicolon,
   #[token("?")]
@@ -148,7 +150,6 @@ pub enum Token<'a> {
   Bool,
   #[token("void")]
   Void,
-
   #[token("typedef")]
   Typedef,
 
