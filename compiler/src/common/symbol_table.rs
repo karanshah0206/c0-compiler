@@ -159,6 +159,6 @@ impl SymbolTable {
 
   /// Check whether a function has been defined.
   pub fn is_defined(&self, id: &str) -> bool {
-    self.is_function(id) && !self.defined_functions.contains(id)
+    self.defined_functions.contains(id)
   }
 }

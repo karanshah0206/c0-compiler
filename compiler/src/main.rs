@@ -13,19 +13,19 @@ fn main() {
   let config = args::parse_args();
 
   let header_str = if let Some(header_file) = config.header {
-    fs::read_to_string(header_file).expect("Could not read header file")
+    fs::read_to_string(header_file).expect("Could not read header file.")
   } else {
     "".to_string()
   };
-  let source_str = fs::read_to_string(config.source.unwrap()).expect("Could not read source file");
+  let source_str = fs::read_to_string(config.source.unwrap()).expect("Could not read source file.");
 
   // 1. Lexical analysis
   let header_token_stream = Token::lexer(&header_str)
     .spanned()
-    .map(|(t, y)| (y.start, t.expect("Badly formatted header code"), y.end));
+    .map(|(t, y)| (y.start, t.expect("Badly formatted header code."), y.end));
   let source_token_stream = Token::lexer(&source_str)
     .spanned()
-    .map(|(t, y)| (y.start, t.expect("Badly formatted source code"), y.end));
+    .map(|(t, y)| (y.start, t.expect("Badly formatted source code."), y.end));
 
   // 2. Syntactic analysis
   let mut header_ast = match parse(header_token_stream) {
