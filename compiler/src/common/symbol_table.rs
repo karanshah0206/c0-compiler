@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::front::ast::{Ident, Param, Typ};
+use crate::common::function_context::FunctionContext;
+use crate::front::ast::{Ident, Typ, Variable};
 
-/// Store and query metadata about named identifiers.
+/// Store and query metadata about symbols (identifiers) in the source code.
 pub struct SymbolTable {
   /// Concrete type for typedefs, return type for functions.
   typ: HashMap<Ident, Typ>,
   /// Sequence of parameter types of a declared function.
-  declared_functions: HashMap<Ident, Vec<Typ>>,
+  function_context: HashMap<Ident, FunctionContext>,
   /// Set of functions that have been defined.
   defined_functions: HashSet<Ident>,
   /// Set of functions declared in header.
@@ -19,7 +20,7 @@ impl SymbolTable {
   pub fn new() -> Self {
     SymbolTable {
       typ: HashMap::new(),
-      declared_functions: HashMap::new(),
+      function_context: HashMap::new(),
       defined_functions: HashSet::new(),
       header_functions: HashSet::new(),
     }
@@ -48,7 +49,7 @@ impl SymbolTable {
     &mut self,
     id: &Ident,
     typ: &mut Typ,
-    params: &mut [Param],
+    params: &mut [Variable],
     is_header: bool,
   ) {
     use Typ::*;
@@ -66,7 +67,7 @@ impl SymbolTable {
     *typ = self.resolve_type(typ.clone());
 
     // validate function parameters in declaration
-    let param_ids: HashSet<String> = HashSet::new();
+    let param_ids: HashSet<Ident> = HashSet::new();
     for (typ, id) in params.iter_mut() {
       *typ = self.resolve_type(typ.clone());
       assert!(*typ != Void, "Parameter {id} cannot be void.");
@@ -90,7 +91,7 @@ impl SymbolTable {
         "Mismatching return type in redeclaration of function {id}."
       );
 
-      let decl_params = self.declared_functions.get(id).unwrap();
+      let decl_params = self.function_context.get(id).unwrap().get_params();
       assert!(
         decl_params.len() == params.len() && params.iter().map(|(t, _)| t).eq(decl_params.iter()),
         "Mismatching parameter list in redeclaration of function {id}."
@@ -100,8 +101,8 @@ impl SymbolTable {
 
       self.typ.insert(id.clone(), typ.clone());
       self
-        .declared_functions
-        .insert(id.clone(), params.iter().map(|(t, _)| t.clone()).collect());
+        .function_context
+        .insert(id.clone(), FunctionContext::new(params));
 
       if is_header {
         self.defined_functions.insert(id.clone()); // header functions are treated as defined
@@ -111,7 +112,7 @@ impl SymbolTable {
   }
 
   /// Add a function definition.
-  pub fn define_function(&mut self, id: &Ident, typ: &mut Typ, params: &mut [Param]) {
+  pub fn define_function(&mut self, id: &Ident, typ: &mut Typ, params: &mut [Variable]) {
     assert!(!self.is_defined(id), "Function {id} cannot be redefined.");
 
     self.declare_function(id, typ, params, false);
@@ -139,26 +140,26 @@ impl SymbolTable {
   /// Get the return type and parameter list of a declared function.
   pub fn get_function_signature(&self, id: &Ident) -> Option<(&Typ, &Vec<Typ>)> {
     if let Some(typ) = self.typ.get(id)
-      && let Some(params) = self.declared_functions.get(id)
+      && let Some(params) = self.function_context.get(id)
     {
-      Some((typ, params))
+      Some((typ, params.get_params()))
     } else {
       None
     }
   }
 
   /// Check whether an identifier is a type alias.
-  pub fn is_typedef(&self, id: &str) -> bool {
-    self.typ.contains_key(id) && !self.declared_functions.contains_key(id)
+  pub fn is_typedef(&self, id: &Ident) -> bool {
+    self.typ.contains_key(id) && !self.function_context.contains_key(id)
   }
 
   /// Check whether an identifier belongs to a declared function.
-  pub fn is_function(&self, id: &str) -> bool {
-    self.declared_functions.contains_key(id)
+  pub fn is_function(&self, id: &Ident) -> bool {
+    self.function_context.contains_key(id)
   }
 
   /// Check whether a function has been defined.
-  pub fn is_defined(&self, id: &str) -> bool {
+  pub fn is_defined(&self, id: &Ident) -> bool {
     self.defined_functions.contains(id)
   }
 }

@@ -1,8 +1,8 @@
 grammar<'input>;
 
-use crate::front::ast::*;
 use lalrpop_util::ParseError;
-use crate::front::lexer::Token;
+
+use crate::front::{ast::*, lexer::Token};
 
 extern {
   type Location = usize;
@@ -124,18 +124,18 @@ Ident : String = {
 };
 
 /// Function parameter list
-ParamList : Vec<Param> = {
+ParamList : Vec<Variable> = {
   "(" ")" => vec![],
-  "(" <p : Param> <pf : ParamFollow*> ")" => std::iter::once(p).chain(pf.into_iter()).collect::<Vec<Param>>(),
+  "(" <p : Param> <pf : ParamFollow*> ")" => std::iter::once(p).chain(pf.into_iter()).collect::<Vec<Variable>>(),
 };
 
 /// Function parameter
-Param : Param = {
+Param : Variable = {
   <t : Type> <i : Ident> => (t, i),
 };
 
 /// Function parameter following a previous one
-ParamFollow : Param = {
+ParamFollow : Variable = {
   "," <p : Param> => p,
 };
 

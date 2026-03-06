@@ -3,11 +3,11 @@ use std::fmt::{Display, Error, Formatter};
 /// Program is a list of global declarations.
 pub type Program = Vec<GlobalDeclaration>;
 
-/// Named identity.
+/// An identifier is a string.
 pub type Ident = String;
 
-/// Function Parameter (type, named identity).
-pub type Param = (Typ, Ident);
+/// A variable is a (type, identifier) tuple.
+pub type Variable = (Typ, Ident);
 
 /// Primitive types supported by the language (and typedefs).
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -21,9 +21,9 @@ pub enum Typ {
 /// Global declaration in the program.
 pub enum GlobalDeclaration {
   /// Function declaration (type, identifier, parameters)
-  FDecl(Typ, Ident, Vec<Param>),
+  FDecl(Typ, Ident, Vec<Variable>),
   /// Function definition (type, identifier, parameters, body)
-  FDefn(Typ, Ident, Vec<Param>, Stmt),
+  FDefn(Typ, Ident, Vec<Variable>, Stmt),
   /// Type definition (underlying type, alias)
   Typedef(Typ, Ident),
 }

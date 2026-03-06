@@ -17,6 +17,8 @@ pub fn analyze_program(header_ast: &mut Program, source_ast: &mut Program) -> Sy
     }
   }
 
+  // functions called in source code must be defined (even if those function calls are unreachable).
+  // main is the entry point, it must always be defined.
   let mut functions_to_define: HashSet<Ident> = ["main".to_string()].into_iter().collect();
 
   for declaration in source_ast {
@@ -25,7 +27,7 @@ pub fn analyze_program(header_ast: &mut Program, source_ast: &mut Program) -> Sy
       FDecl(typ, id, params) => symbol_table.declare_function(id, typ, params, false),
       FDefn(typ, id, params, ast) => {
         symbol_table.define_function(id, typ, params);
-        match analyze_function(ast, typ, params, &mut symbol_table) {
+        match analyze_function(ast, typ, &mut symbol_table) {
           Ok(functions_called) => functions_to_define.extend(functions_called),
           Err(error) => panic!("{error}"),
         };
@@ -47,8 +49,7 @@ pub fn analyze_program(header_ast: &mut Program, source_ast: &mut Program) -> Sy
 fn analyze_function(
   ast: &mut Stmt,
   typ: &Typ,
-  params: &[Param],
   symbol_table: &mut SymbolTable,
-) -> Result<HashSet<String>, String> {
+) -> Result<HashSet<Ident>, String> {
   todo!();
 }
