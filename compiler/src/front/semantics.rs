@@ -48,8 +48,8 @@ pub fn analyze_program(header_ast: &mut Program, source_ast: &mut Program) -> Sy
 
 /// Result of typechecking an expression or statement.
 struct TcResult {
-  /// Type that the statement returns (if any).
-  returns: Option<Typ>,
+  /// Does the statement always return?
+  returns: bool,
   /// Variables defined in this expression/statement.
   defines: HashSet<Ident>,
 }
@@ -58,7 +58,7 @@ impl TcResult {
   /// No returns, no defines in statement/expression.
   fn ok() -> Self {
     TcResult {
-      returns: None,
+      returns: false,
       defines: HashSet::new(),
     }
   }
@@ -66,15 +66,15 @@ impl TcResult {
   /// Statement/expression defines variables, no return.
   fn ok_def(defines: HashSet<Ident>) -> Self {
     TcResult {
-      returns: None,
+      returns: false,
       defines,
     }
   }
 
   /// Statement returns.
-  fn ok_ret(typ: Typ, defines: HashSet<Ident>) -> Self {
+  fn ok_ret(defines: HashSet<Ident>) -> Self {
     TcResult {
-      returns: Some(typ),
+      returns: true,
       defines,
     }
   }
@@ -83,7 +83,7 @@ impl TcResult {
 /// Perform semantic analysis on a function's AST.
 fn analyze_function(id: &Ident, ast: &mut Stmt, typ: &Typ, st: &mut SymbolTable) -> HashSet<Ident> {
   assert!(
-    &analyze_stmt(id, ast, st).returns.unwrap_or(Typ::Void) == typ,
+    typ == &Typ::Void || analyze_stmt(id, ast, st).returns,
     "{id} must always return {typ}."
   );
   st.get_function_context(id).get_function_calls()
@@ -186,7 +186,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       // A couple statements in sequence
 
       let res_1 = analyze_stmt(id, stmt_1, st);
-      if res_1.returns.is_some() {
+      if res_1.returns {
         return res_1;
       }
 
@@ -223,8 +223,8 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
           .collect(),
       );
 
-      if if_res.returns == else_res.returns {
-        res.returns = if_res.returns
+      if if_res.returns && else_res.returns {
+        res.returns = true
       }
 
       let defined_vars = res
@@ -312,17 +312,13 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       for stmt in stmts {
         let res = analyze_stmt(id, stmt, st);
+        block_res.defines.extend(res.defines);
 
-        if block_res.returns.is_none() {
-          block_res.returns = res.returns;
-        }
-
-        if block_res.returns.is_some() {
+        if block_res.returns || res.returns {
+          block_res.returns = true;
           block_res
             .defines
             .extend(st.get_function_context(id).define_all_vars());
-        } else {
-          block_res.defines.extend(res.defines);
         }
       }
 
@@ -372,25 +368,21 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         }
       }
 
-      TcResult::ok_ret(typ, st.get_function_context(id).define_all_vars())
-    }
-    Stmt::Expr(expr) => {
-      // standalone expression
-
-      let mut res = analyze_expr(id, expr, st);
-      res.returns = None;
-      res
+      TcResult::ok_ret(st.get_function_context(id).define_all_vars())
     }
     Stmt::Assert(expr) => {
-      // assertion elaborated into a conditional
+      // assertion
 
       analyze_expr(id, expr, st);
       assert!(
         expr.get_type() == Typ::Bool,
-        "Assert expression must evaluate to a boolean."
+        "Assert expression must evaluate to bool."
       );
       TcResult::ok()
     }
+    // standalone expression
+    Stmt::Expr(expr) => analyze_expr(id, expr, st),
+    // does nothing (like me)
     Stmt::NoOp() => TcResult::ok(),
   }
 }
