@@ -213,20 +213,19 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       // outer variables that are defined in both branches become defined in outer scope.
       // if both branches return, the statement returns.
-      let mut function_ctx = st.get_function_context(id);
+      let function_ctx = st.get_function_context(id);
 
-      let mut res = TcResult::ok_ret(
-        if if_res.returns == else_res.returns {
-          if_res.returns.unwrap_or(Typ::Void)
-        } else {
-          Typ::Void
-        },
+      let mut res = TcResult::ok_def(
         if_res
           .defines
           .intersection(&else_res.defines)
           .cloned()
           .collect(),
       );
+
+      if if_res.returns == else_res.returns {
+        res.returns = if_res.returns
+      }
 
       let defined_vars = res
         .defines
@@ -262,10 +261,12 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
     Stmt::For(init_stmt, cond_expr, step_stmt, body_stmt) => {
       // a for loop
 
+      let mut res = TcResult::ok();
+
       st.get_function_context(id).scope_context.enter_scope();
 
       if let Some(init_stmt) = init_stmt.as_mut() {
-        analyze_stmt(id, init_stmt, st);
+        res = analyze_stmt(id, init_stmt, st);
       }
 
       analyze_expr(id, cond_expr, st);
@@ -284,7 +285,19 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       st.get_function_context(id).scope_context.exit_scope();
 
-      TcResult::ok()
+      // if an outer variable is defined in initializer, it is defined in parent scope
+      let function_ctx = st.get_function_context(id);
+
+      res
+        .defines
+        .retain(|var_id| function_ctx.is_var_declared(var_id));
+
+      for var_id in res.defines.iter() {
+        let var_typ = function_ctx.get_var_type(var_id);
+        function_ctx.define_var((var_typ, var_id.to_string()));
+      }
+
+      res
     }
     Stmt::Block(stmts) => {
       // basic block (scoped collection of statements)
@@ -316,7 +329,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       st.get_function_context(id).scope_context.exit_scope();
 
       // outer variables defined in inner scopes become defined on the block's scope.
-      let mut function_ctx = st.get_function_context(id);
+      let function_ctx = st.get_function_context(id);
 
       let defined_vars = block_res
         .defines
@@ -348,13 +361,13 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
           let expr_typ = expr.get_type();
           assert!(
             expr_typ == typ,
-            "Function {id} returns {expr_typ} but must return {typ}."
+            "Returning {expr_typ}, but function {id} returns {typ}."
           );
         }
         None => {
           assert!(
             typ == Typ::Void,
-            "Function {id} returns void but must return {typ}."
+            "Returning void, but function {id} returns {typ}."
           );
         }
       }
@@ -384,5 +397,94 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
 /// Perform semantic analysis on an expression.
 fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
-  todo!();
+  use Expr::*;
+
+  match expr {
+    Number(_) => TcResult::ok(),
+    Bool(_) => TcResult::ok(),
+    Variable(var_id, typ) => {
+      // variable in the source code
+
+      let function_ctx = st.get_function_context(id);
+      *typ = Some(function_ctx.get_var_type(var_id));
+      assert!(
+        function_ctx.is_var_defined(var_id),
+        "Variable {var_id} not defined in this scope."
+      );
+      TcResult::ok()
+    }
+    Binop(l_expr, bin_op, r_expr, typ) => {
+      // binary operator
+
+      analyze_expr(id, l_expr, st);
+      analyze_expr(id, r_expr, st);
+
+      let e_typ = l_expr.get_type();
+
+      assert!(
+        e_typ == r_expr.get_type(),
+        "Binary operands must be of the same type."
+      );
+
+      *typ = match bin_op {
+        BinOp::Add
+        | BinOp::Sub
+        | BinOp::Mul
+        | BinOp::Div
+        | BinOp::Mod
+        | BinOp::And
+        | BinOp::Xor
+        | BinOp::Or
+        | BinOp::Sal
+        | BinOp::Sar => {
+          assert!(
+            e_typ == Typ::Int,
+            "Binary operator {bin_op} expected int but got {e_typ}."
+          );
+          Some(Typ::Int)
+        }
+        BinOp::LAnd | BinOp::LOr => {
+          assert!(
+            e_typ == Typ::Bool,
+            "Binary operator {bin_op} expected bool but got {e_typ}."
+          );
+          Some(Typ::Bool)
+        }
+        BinOp::CmpEq | BinOp::CmpNeq => {
+          assert!(
+            e_typ != Typ::Void,
+            "Binary operator {bin_op} doesn't support the void type."
+          );
+          Some(Typ::Bool)
+        }
+        BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
+          assert!(
+            e_typ == Typ::Int,
+            "Binary operator {bin_op} expected int but got {e_typ}."
+          );
+          Some(Typ::Bool)
+        }
+      };
+
+      TcResult::ok()
+    }
+    Unop(un_op, expr, typ) => {
+      // unary opeartor
+
+      *typ = match un_op {
+        UnOp::Neg | UnOp::Not => Some(Typ::Int),
+        UnOp::LNot => Some(Typ::Bool),
+      };
+
+      analyze_expr(id, expr, st);
+      assert!(
+        Some(expr.get_type()) == *typ,
+        "Operand to the unary operator {un_op} is of unsupported type."
+      );
+
+      TcResult::ok()
+    }
+    Ternop(cond_expr, if_expr, else_expr, typ) => todo!(),
+    Call(_, exprs, typ) => todo!(),
+  }
 }
