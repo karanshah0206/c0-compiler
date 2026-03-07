@@ -89,7 +89,7 @@ fn analyze_function(id: &Ident, ast: &mut Stmt, typ: &Typ, st: &mut SymbolTable)
   st.get_function_context(id).get_function_calls()
 }
 
-/// Perform semantic analysis on a statement in the source code.
+/// Perform semantic analysis on a statement.
 fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
   match stmt {
     Stmt::Decl(var) => {
@@ -194,10 +194,101 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       res_2.defines.extend(res_1.defines.iter().cloned());
       res_2
     }
-    Stmt::Cond(expr, stmt, stmt1) => todo!(),
-    Stmt::While(expr, stmt) => todo!(),
-    Stmt::For(stmt, expr, stmt1, stmt2) => todo!(),
+    Stmt::Cond(cond_expr, if_stmt, else_stmt) => {
+      // an if-else statement
+
+      analyze_expr(id, cond_expr, st);
+      assert!(
+        cond_expr.get_type() == Typ::Bool,
+        "Condition expression must evaluate to bool."
+      );
+
+      st.get_function_context(id).scope_context.enter_scope();
+      let if_res = analyze_stmt(id, if_stmt, st);
+      st.get_function_context(id).scope_context.exit_scope();
+
+      st.get_function_context(id).scope_context.enter_scope();
+      let else_res = analyze_stmt(id, else_stmt, st);
+      st.get_function_context(id).scope_context.exit_scope();
+
+      // outer variables that are defined in both branches become defined in outer scope.
+      // if both branches return, the statement returns.
+      let mut function_ctx = st.get_function_context(id);
+
+      let mut res = TcResult::ok_ret(
+        if if_res.returns == else_res.returns {
+          if_res.returns.unwrap_or(Typ::Void)
+        } else {
+          Typ::Void
+        },
+        if_res
+          .defines
+          .intersection(&else_res.defines)
+          .cloned()
+          .collect(),
+      );
+
+      let defined_vars = res
+        .defines
+        .iter()
+        .map(|var_id| (function_ctx.get_var_type(var_id), var_id.to_string()))
+        .collect::<Vec<_>>();
+
+      for var in defined_vars {
+        if function_ctx.is_var_declared(&var.1) {
+          function_ctx.define_var(var);
+        } else {
+          res.defines.remove(&var.1);
+        }
+      }
+
+      res
+    }
+    Stmt::While(cond_expr, body_stmt) => {
+      // a while loop
+
+      analyze_expr(id, cond_expr, st);
+      assert!(
+        cond_expr.get_type() == Typ::Bool,
+        "While loop condition must evaluate to bool."
+      );
+
+      st.get_function_context(id).scope_context.enter_scope();
+      analyze_stmt(id, body_stmt, st);
+      st.get_function_context(id).scope_context.exit_scope();
+
+      TcResult::ok()
+    }
+    Stmt::For(init_stmt, cond_expr, step_stmt, body_stmt) => {
+      // a for loop
+
+      st.get_function_context(id).scope_context.enter_scope();
+
+      if let Some(init_stmt) = init_stmt.as_mut() {
+        analyze_stmt(id, init_stmt, st);
+      }
+
+      analyze_expr(id, cond_expr, st);
+      assert!(
+        cond_expr.get_type() == Typ::Bool,
+        "For loop condition must evaluate to bool."
+      );
+
+      if let Some(step_stmt) = step_stmt.as_mut() {
+        analyze_stmt(id, step_stmt, st);
+      }
+
+      st.get_function_context(id).scope_context.enter_scope();
+      analyze_stmt(id, body_stmt, st);
+      st.get_function_context(id).scope_context.exit_scope();
+
+      st.get_function_context(id).scope_context.exit_scope();
+
+      TcResult::ok()
+    }
     Stmt::Block(stmts) => {
+      // basic block (scoped collection of statements)
+
       let mut block_res = TcResult::ok();
 
       if stmts.is_empty() {
@@ -214,13 +305,32 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         }
 
         if block_res.returns.is_some() {
-          st.get_function_context(id).define_all_vars();
+          block_res
+            .defines
+            .extend(st.get_function_context(id).define_all_vars());
         } else {
           block_res.defines.extend(res.defines);
         }
       }
 
       st.get_function_context(id).scope_context.exit_scope();
+
+      // outer variables defined in inner scopes become defined on the block's scope.
+      let mut function_ctx = st.get_function_context(id);
+
+      let defined_vars = block_res
+        .defines
+        .iter()
+        .map(|var_id| (function_ctx.get_var_type(var_id), var_id.to_string()))
+        .collect::<Vec<_>>();
+
+      for var in defined_vars {
+        if function_ctx.is_var_declared(&var.1) {
+          function_ctx.define_var(var);
+        } else {
+          block_res.defines.remove(&var.1);
+        }
+      }
 
       block_res
     }
@@ -272,6 +382,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
   }
 }
 
+/// Perform semantic analysis on an expression.
 fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
   todo!();
 }

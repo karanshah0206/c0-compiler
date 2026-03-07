@@ -95,9 +95,9 @@ impl FunctionContext {
       defn_scope: Some(self.scope_context.current_id),
     };
 
-    // in case it was previously declared
-    if let Some(ctx) = self.variables.get(&var.1) {
-      var_context.decl_scope = ctx.decl_scope;
+    // in case it is already declared
+    if self.is_var_declared(&var.1) {
+      var_context.decl_scope = self.variables.get(&var.1).unwrap().decl_scope;
     }
 
     self.variables.insert(var.1, var_context);
