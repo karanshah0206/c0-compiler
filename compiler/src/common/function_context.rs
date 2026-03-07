@@ -7,7 +7,7 @@ pub struct FunctionContext {
   /// Sequence of parameter types taken by this function.
   params: Vec<Typ>,
   /// Scope context for semantic analysis within this function.
-  scope_context: ScopeContext,
+  pub scope_context: ScopeContext,
   /// Variables within this function.
   variables: HashMap<Ident, VarContext>,
   /// Function calls made from within this function.
@@ -37,9 +37,13 @@ impl FunctionContext {
     &self.params
   }
 
-  /// Try getting a variable's context.
-  pub fn get_var_ctx(&self, id: &Ident) -> Option<&VarContext> {
-    self.variables.get(id)
+  /// Get the type of a variable.
+  pub fn get_var_type(&self, id: &Ident) -> Typ {
+    self
+      .variables
+      .get(id)
+      .map(|ctx| ctx.typ.clone())
+      .expect(&format!("Unknown variable {id}."))
   }
 
   /// Check if a variable is declared in the currently active scopes.
@@ -64,6 +68,12 @@ impl FunctionContext {
   /// Declare a variable in the current scope.
   pub fn declare_var(&mut self, var: Variable) {
     assert!(var.0 != Typ::Void, "Variable {} cannot be void.", var.1);
+
+    assert!(
+      !self.is_var_declared(&var.1),
+      "Variable {} is already declared in this scope.",
+      var.1
+    );
 
     self.variables.insert(
       var.1,
@@ -94,7 +104,7 @@ impl FunctionContext {
   }
 
   /// Define all variables in the current local scope.
-  pub fn define_all_vars(&mut self) -> HashSet<&Ident> {
+  pub fn define_all_vars(&mut self) -> HashSet<Ident> {
     let current_scope_id = self.scope_context.current_id;
 
     let mut defines = HashSet::new();
@@ -102,7 +112,7 @@ impl FunctionContext {
     for (id, ctx) in self.variables.iter_mut() {
       if self.scope_context.is_active(ctx.decl_scope) {
         if ctx.defn_scope != Some(current_scope_id) {
-          defines.insert(id);
+          defines.insert(id.to_string());
           ctx.defn_scope = Some(current_scope_id)
         }
       }
@@ -110,10 +120,20 @@ impl FunctionContext {
 
     defines
   }
+
+  /// Get a copy of functions called by this function.
+  pub fn get_function_calls(&self) -> HashSet<Ident> {
+    self.function_calls.clone()
+  }
+
+  /// Add a function call made by this function.
+  pub fn insert_function_call(&mut self, id: Ident) {
+    self.function_calls.insert(id);
+  }
 }
 
 /// Structure and state of scopes within the type context.
-struct ScopeContext {
+pub struct ScopeContext {
   /// Identifier for the currently evaluated scope in context.
   current_id: usize,
   /// Total number of scopes within context.
@@ -125,13 +145,13 @@ struct ScopeContext {
 }
 
 impl ScopeContext {
-  /// Generate a new scope context with a root scope indexed at `0`.
+  /// Generate a new, empty scope context.
   fn new() -> Self {
     ScopeContext {
       current_id: 0,
-      count: 1,
+      count: 0,
       active_scopes: HashSet::new(),
-      scope_stack: vec![0],
+      scope_stack: Vec::new(),
     }
   }
 
@@ -146,7 +166,7 @@ impl ScopeContext {
   /// Leave current scope and go back to parent scope.
   pub fn exit_scope(&mut self) {
     self.active_scopes.remove(&self.current_id);
-    self.scope_stack.pop().expect("Cannot exit from root scope");
+    self.scope_stack.pop().expect("Scope stack is empty.");
     self.current_id = *self.scope_stack.last().unwrap_or(&0);
   }
 
@@ -157,7 +177,7 @@ impl ScopeContext {
 }
 
 /// Metadata and semantic info of a variable.
-pub struct VarContext {
+struct VarContext {
   /// Type of the variable.
   typ: Typ,
   /// Id of the scope within which the variable is declared.

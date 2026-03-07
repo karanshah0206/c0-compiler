@@ -171,8 +171,8 @@ Block : Stmt = {
 
 /// New variable declaration
 Decl : Stmt = {
-  <t : Type> <i : Ident> => Stmt::Decl(t, i),
-  <t : Type> <i : Ident> "=" <e : Expr> => Stmt::Defn(t, i, e),
+  <t : Type> <i : Ident> => Stmt::Decl((t, i)),
+  <t : Type> <i : Ident> "=" <e : Expr> => Stmt::Defn((t, i), e),
 };
 
 /// Simple statements

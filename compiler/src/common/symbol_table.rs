@@ -126,6 +126,8 @@ impl SymbolTable {
     match typ {
       Typedef(id) => {
         if let Some(typ) = self.typ.get(&id).cloned() {
+          assert!(!self.is_function(&id), "{id} is not a type.");
+
           let underlying = self.resolve_type(typ);
           self.typ.insert(id, underlying.clone());
           underlying
@@ -146,6 +148,13 @@ impl SymbolTable {
     } else {
       None
     }
+  }
+
+  pub fn get_function_context(&mut self, id: &Ident) -> &mut FunctionContext {
+    self
+      .function_context
+      .get_mut(id)
+      .expect(&format!("Unknown function {id}."))
   }
 
   /// Check whether an identifier is a type alias.

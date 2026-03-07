@@ -31,9 +31,9 @@ pub enum GlobalDeclaration {
 /// Local statement.
 pub enum Stmt {
   /// Variable declaration
-  Decl(Typ, Ident),
+  Decl(Variable),
   /// Variable definition
-  Defn(Typ, Ident, Expr),
+  Defn(Variable, Expr),
   /// Variable assignment
   Asgn(Ident, AsnOp, Expr),
   /// Post-operator (++/--
@@ -80,17 +80,17 @@ pub enum Expr {
 
 impl Expr {
   /// Get the type produced as result of computing this expression.
-  pub fn get_type(&self) -> Option<Typ> {
+  pub fn get_type(&self) -> Typ {
     use Expr::*;
 
     match self {
-      Number(_) => Some(Typ::Int),
-      Bool(_) => Some(Typ::Bool),
+      Number(_) => Typ::Int,
+      Bool(_) => Typ::Bool,
       Variable(_, typ)
       | Binop(_, _, _, typ)
       | Unop(_, _, typ)
       | Ternop(_, _, _, typ)
-      | Call(_, _, typ) => typ.clone(),
+      | Call(_, _, typ) => typ.clone().unwrap_or(Typ::Void),
     }
   }
 }
