@@ -28,6 +28,8 @@ fn skip_block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip 
     idx += 1;
   }
 
+  assert!(depth == 0, "Unclosed block comments.");
+
   lex.bump(bytes.len());
   logos::Skip
 }
