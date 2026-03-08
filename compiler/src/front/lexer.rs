@@ -153,7 +153,7 @@ pub enum Token<'a> {
   #[token("typedef")]
   Typedef,
 
-  #[regex("[A-Za-z][A-Za-z0-9_]*")]
+  #[regex("[A-Za-z_][A-Za-z0-9_]*")]
   Ident(&'a str),
 
   #[regex(r"0[xX][0-9a-fA-F]+", |lex| {
@@ -170,6 +170,17 @@ pub enum Token<'a> {
   #[regex(r"//[^\n]*", logos::skip, allow_greedy = true)]
   #[token("/*", skip_block_comment)]
   Comment,
+
+  // keywords reserved for future use
+  #[token("break")]
+  #[token("continue")]
+  #[token("char")]
+  #[token("string")]
+  #[token("alloc")]
+  #[token("alloc_array")]
+  #[token("NULL")]
+  #[token("struct")]
+  Error,
 }
 
 impl Display for Token<'_> {

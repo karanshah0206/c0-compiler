@@ -23,13 +23,16 @@ impl FunctionContext {
       variables: HashMap::new(),
       function_calls: HashSet::new(),
     };
-
-    // Function parameters are treated as defined
-    for param in params {
-      function_context.define_var(param.clone());
-    }
-
+    function_context.reset_params(params);
     function_context
+  }
+
+  /// Clear previous param names and initialize new param list as defined
+  pub fn reset_params(&mut self, params: &[Variable]) {
+    self.variables.clear();
+    for param in params {
+      self.define_var(param.clone());
+    }
   }
 
   /// Get a function's sequence of parameter types.
@@ -89,18 +92,27 @@ impl FunctionContext {
   pub fn define_var(&mut self, var: Variable) {
     assert!(var.0 != Typ::Void, "Variable {} cannot be void.", var.1);
 
-    let mut var_context = VarContext {
-      typ: var.0,
-      decl_scope: self.scope_context.current_id,
-      defn_scope: Some(self.scope_context.current_id),
-    };
-
-    // in case it is already declared
     if self.is_var_declared(&var.1) {
-      var_context.decl_scope = self.variables.get(&var.1).unwrap().decl_scope;
-    }
+      let existing = self.variables.get_mut(&var.1).unwrap();
+      existing.typ = var.0;
 
-    self.variables.insert(var.1, var_context);
+      // Keep the declaration scope and preserve an already-active definition.
+      if !existing
+        .defn_scope
+        .is_some_and(|scope_id| self.scope_context.is_active(scope_id))
+      {
+        existing.defn_scope = Some(self.scope_context.current_id);
+      }
+    } else {
+      self.variables.insert(
+        var.1,
+        VarContext {
+          typ: var.0,
+          decl_scope: self.scope_context.current_id,
+          defn_scope: Some(self.scope_context.current_id),
+        },
+      );
+    }
   }
 
   /// Define all variables in the current local scope.
@@ -109,11 +121,15 @@ impl FunctionContext {
 
     let mut defines = HashSet::new();
 
-    for (id, ctx) in self.variables.iter_mut() {
-      if self.scope_context.is_active(ctx.decl_scope) {
-        if ctx.defn_scope != Some(current_scope_id) {
+    for (id, var_ctx) in self.variables.iter_mut() {
+      if self.scope_context.is_active(var_ctx.decl_scope) {
+        // Only promote declarations that are currently undefined in active scopes.
+        if !var_ctx
+          .defn_scope
+          .is_some_and(|scope_id| self.scope_context.is_active(scope_id))
+        {
           defines.insert(id.to_string());
-          ctx.defn_scope = Some(current_scope_id)
+          var_ctx.defn_scope = Some(current_scope_id)
         }
       }
     }

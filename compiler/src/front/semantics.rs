@@ -116,11 +116,11 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         var.1
       );
 
-      var.0 = st.resolve_type(var.0.clone());
+      analyze_expr(id, expr, st);
 
+      var.0 = st.resolve_type(var.0.clone());
       st.get_function_context(id).declare_var(var.clone());
 
-      analyze_expr(id, expr, st);
       assert!(
         var.0 == expr.get_type(),
         "Mismatching types in defining variable {}.",
@@ -236,8 +236,6 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       for var in defined_vars {
         if function_ctx.is_var_declared(&var.1) {
           function_ctx.define_var(var);
-        } else {
-          res.defines.remove(&var.1);
         }
       }
 
@@ -275,13 +273,27 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         "For loop condition must evaluate to bool."
       );
 
+      st.get_function_context(id).scope_context.enter_scope();
+      let body_res = analyze_stmt(id, body_stmt, st);
+      st.get_function_context(id).scope_context.exit_scope();
+
+      // Step executes after the body, but still lives in the for-loop scope.
+      // So, we promote outer variables defined in body to the for-loop scope.
+      let function_ctx = st.get_function_context(id);
+      let defined_in_body = body_res
+        .defines
+        .iter()
+        .filter(|var_id| function_ctx.is_var_declared(var_id))
+        .map(|var_id| (function_ctx.get_var_type(var_id), var_id.to_string()))
+        .collect::<Vec<_>>();
+
+      for var in defined_in_body {
+        function_ctx.define_var(var);
+      }
+
       if let Some(step_stmt) = step_stmt.as_mut() {
         analyze_stmt(id, step_stmt, st);
       }
-
-      st.get_function_context(id).scope_context.enter_scope();
-      analyze_stmt(id, body_stmt, st);
-      st.get_function_context(id).scope_context.exit_scope();
 
       st.get_function_context(id).scope_context.exit_scope();
 
@@ -314,11 +326,13 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         let res = analyze_stmt(id, stmt, st);
         block_res.defines.extend(res.defines);
 
-        if block_res.returns || res.returns {
+        if res.returns && !block_res.returns {
           block_res.returns = true;
           block_res
             .defines
             .extend(st.get_function_context(id).define_all_vars());
+        } else if res.returns {
+          block_res.returns = true;
         }
       }
 
@@ -357,6 +371,10 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
           assert!(
             expr_typ == typ,
             "Returning {expr_typ}, but function {id} returns {typ}."
+          );
+          assert!(
+            expr_typ != Typ::Void,
+            "Return in function {id} cannot use a void expression."
           );
         }
         None => {
@@ -507,6 +525,11 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
       let (ret_typ, params) = st
         .get_function_signature(func_id)
         .expect(&format!("Call to unknown function {func_id}"));
+
+      assert!(
+        !st.get_function_context(id).is_var_declared(func_id),
+        "Cannot call function {func_id} as it is shadowed by an identical identifier."
+      );
 
       assert!(
         args.len() == params.len(),

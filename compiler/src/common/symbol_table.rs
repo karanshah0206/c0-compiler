@@ -67,7 +67,7 @@ impl SymbolTable {
     *typ = self.resolve_type(typ.clone());
 
     // validate function parameters in declaration
-    let param_ids: HashSet<Ident> = HashSet::new();
+    let mut param_ids: HashSet<Ident> = HashSet::new();
     for (typ, id) in params.iter_mut() {
       *typ = self.resolve_type(typ.clone());
       assert!(*typ != Void, "Parameter {id} cannot be void.");
@@ -78,7 +78,7 @@ impl SymbolTable {
       );
 
       assert!(
-        param_ids.contains(id),
+        param_ids.insert(id.to_string()),
         "Identifier {id} cannot be used for multiple parameters."
       );
     }
@@ -91,11 +91,14 @@ impl SymbolTable {
         "Mismatching return type in redeclaration of function {id}."
       );
 
-      let decl_params = self.function_context.get(id).unwrap().get_params();
+      // check parameter types match
+      let function_ctx = self.function_context.get_mut(id).unwrap();
+      let decl_params = function_ctx.get_params();
       assert!(
         decl_params.len() == params.len() && params.iter().map(|(t, _)| t).eq(decl_params.iter()),
         "Mismatching parameter list in redeclaration of function {id}."
       );
+      function_ctx.reset_params(params);
     } else {
       // new function declaration for this identifier
 
