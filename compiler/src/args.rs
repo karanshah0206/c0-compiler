@@ -4,11 +4,13 @@ use std::env;
 pub enum EmitTarget {
   Abstract,
   X86_64,
+  LLVM,
 }
 
 /// Configuration options for the compiler
 pub struct Config {
   pub verbose: bool,
+  pub dump_ast: bool,
   pub check: bool,
   pub optimizer_level: u8,
   pub target: EmitTarget,
@@ -20,6 +22,7 @@ impl Config {
   fn defalut() -> Self {
     Config {
       verbose: false,
+      dump_ast: false,
       check: false,
       optimizer_level: 0,
       target: EmitTarget::Abstract,
@@ -37,6 +40,7 @@ pub fn parse_args() -> Config {
   while index < args.len() {
     match args[index].as_str() {
       "-v" | "--verbose" => config.verbose = true,
+      "--dump-ast" => config.dump_ast = true,
       "-t" | "--typecheck-only" => config.check = true,
       arg if arg.starts_with("-O") => {
         if arg == "-O" {
@@ -50,6 +54,7 @@ pub fn parse_args() -> Config {
           match args[index + 1].as_str() {
             "abs" => config.target = EmitTarget::Abstract,
             "x86-64" => config.target = EmitTarget::X86_64,
+            "llvm" => config.target = EmitTarget::LLVM,
             other => panic!("Unknown target {}", other),
           };
           index += 1;

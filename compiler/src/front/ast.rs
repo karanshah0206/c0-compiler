@@ -216,6 +216,29 @@ impl AsnOp {
   }
 }
 
+// Implementing display for types in AST, useful when compiler is passed the `--dump-assem` flag.
+
+impl Display for GlobalDeclaration {
+  fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
+    match self {
+      GlobalDeclaration::FDecl(_, _, _) | GlobalDeclaration::Typedef(_, _) => write!(fmt, ""),
+      GlobalDeclaration::FDefn(typ, id, params, body) => {
+        let params = params
+          .iter()
+          .map(|(param_typ, param_id)| format!("({param_typ}, \"{param_id}\")"))
+          .collect::<Vec<_>>()
+          .join(", ");
+
+        if params.is_empty() {
+          write!(fmt, "{typ} {id}():\n{body}")
+        } else {
+          write!(fmt, "{typ} {id}({params}):\n{body}")
+        }
+      }
+    }
+  }
+}
+
 impl Display for Typ {
   fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
     use Typ::*;
@@ -225,6 +248,90 @@ impl Display for Typ {
       Int => write!(fmt, "int"),
       Bool => write!(fmt, "bool"),
       Typedef(id) => write!(fmt, "{id}"),
+    }
+  }
+}
+
+impl Display for Stmt {
+  fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
+    fn fmt_opt_stmt(stmt: &Option<Stmt>) -> String {
+      match stmt {
+        Some(stmt) => format!("{stmt}"),
+        None => "".to_string(),
+      }
+    }
+
+    match self {
+      Stmt::Decl((typ, id)) => write!(fmt, "Decl({typ}, \"{id}\")"),
+      Stmt::Defn((typ, id), expr) => write!(fmt, "Defn({typ}, \"{id}\", {expr})"),
+      Stmt::Asgn(id, asn_op, expr) => write!(fmt, "Asgn(\"{id}\", {asn_op}, {expr})"),
+      Stmt::PostOp(id, post_op) => write!(fmt, "PostOp(\"{id}\", {post_op})"),
+      Stmt::Seq(stmt, stmt1) => write!(fmt, "Seq({stmt}, {stmt1})"),
+      Stmt::Cond(expr, stmt, stmt1) => write!(fmt, "Cond({expr}, {stmt}, {stmt1})"),
+      Stmt::While(expr, stmt) => write!(fmt, "While({expr}, {stmt})"),
+      Stmt::For(stmt, expr, stmt1, stmt2) => {
+        write!(
+          fmt,
+          "For({}, {expr}, {}, {stmt2})",
+          fmt_opt_stmt(stmt.as_ref()),
+          fmt_opt_stmt(stmt1.as_ref())
+        )
+      }
+      Stmt::Block(stmts) => {
+        let rendered = stmts
+          .iter()
+          .map(|stmt| format!("{stmt}"))
+          .collect::<Vec<_>>()
+          .join(", ");
+        write!(fmt, "Block([{rendered}])")
+      }
+      Stmt::Ret(expr) => match expr {
+        Some(expr) => write!(fmt, "Ret({expr})"),
+        None => write!(fmt, "Ret(void)"),
+      },
+      Stmt::Expr(expr) => write!(fmt, "Expr({expr})"),
+      Stmt::Assert(expr) => write!(fmt, "Assert({expr})"),
+      Stmt::NoOp() => write!(fmt, "NoOp"),
+    }
+  }
+}
+
+impl Display for Expr {
+  fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
+    fn fmt_opt_typ(typ: &Option<Typ>) -> String {
+      match typ {
+        Some(typ) => format!("{typ}"),
+        None => "void".to_string(),
+      }
+    }
+
+    match self {
+      Expr::Number(value) => write!(fmt, "Number({value})"),
+      Expr::Bool(value) => write!(fmt, "Bool({value})"),
+      Expr::Variable(id, typ) => write!(fmt, "Variable(\"{id}\", {})", fmt_opt_typ(typ)),
+      Expr::Binop(lhs, op, rhs, typ) => {
+        write!(fmt, "Binop({lhs}, {op}, {rhs}, {})", fmt_opt_typ(typ))
+      }
+      Expr::Unop(op, rhs, typ) => write!(fmt, "Unop({op}, {rhs}, {})", fmt_opt_typ(typ)),
+      Expr::Ternop(cond, if_expr, else_expr, typ) => {
+        write!(
+          fmt,
+          "Ternop({cond}, {if_expr}, {else_expr}, {})",
+          fmt_opt_typ(typ)
+        )
+      }
+      Expr::Call(id, args, typ) => {
+        let rendered_args = args
+          .iter()
+          .map(|arg| format!("{arg}"))
+          .collect::<Vec<_>>()
+          .join(", ");
+        write!(
+          fmt,
+          "Call(\"{id}\", [{rendered_args}], {})",
+          fmt_opt_typ(typ)
+        )
+      }
     }
   }
 }

@@ -51,6 +51,17 @@ fn main() {
       // 3. Semantic analysis
       let symbol_table = semantics::analyze_program(&mut header_ast, &mut source_ast);
 
+      if config.dump_ast {
+        for ast in source_ast {
+          println!("{ast}");
+        }
+      }
+
+      if config.check {
+        println!("Semantic analysis passes.");
+        return 0;
+      }
+
       return 0;
     })
     .unwrap();
