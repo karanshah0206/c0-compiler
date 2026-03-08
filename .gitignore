@@ -4,6 +4,7 @@ bin/
 *.out
 */debug/
 */target/
+.DS_Store
 
 # generated parser
 c0.rs

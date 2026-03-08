@@ -140,11 +140,11 @@ impl SymbolTable {
   }
 
   /// Get the return type and parameter list of a declared function.
-  pub fn get_function_signature(&self, id: &Ident) -> Option<(&Typ, &Vec<Typ>)> {
+  pub fn get_function_signature(&self, id: &Ident) -> Option<(Typ, Vec<Typ>)> {
     if let Some(typ) = self.typ.get(id)
       && let Some(params) = self.function_context.get(id)
     {
-      Some((typ, params.get_params()))
+      Some((typ.clone(), params.get_params().clone()))
     } else {
       None
     }

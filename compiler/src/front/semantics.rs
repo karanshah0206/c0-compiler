@@ -83,7 +83,7 @@ impl TcResult {
 /// Perform semantic analysis on a function's AST.
 fn analyze_function(id: &Ident, ast: &mut Stmt, typ: &Typ, st: &mut SymbolTable) -> HashSet<Ident> {
   assert!(
-    typ == &Typ::Void || analyze_stmt(id, ast, st).returns,
+    analyze_stmt(id, ast, st).returns || typ == &Typ::Void,
     "{id} must always return {typ}."
   );
   st.get_function_context(id).get_function_calls()
@@ -349,7 +349,6 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       let (typ, _) = st
         .get_function_signature(id)
         .expect(&format!("Unknown function {id}."));
-      let typ = typ.clone();
 
       match expr {
         Some(expr) => {
@@ -382,7 +381,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
     }
     // standalone expression
     Stmt::Expr(expr) => analyze_expr(id, expr, st),
-    // does nothing (like me)
+    // no operation (do nothing)
     Stmt::NoOp() => TcResult::ok(),
   }
 }
@@ -476,7 +475,54 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
 
       TcResult::ok()
     }
-    Ternop(cond_expr, if_expr, else_expr, typ) => todo!(),
-    Call(_, exprs, typ) => todo!(),
+    Ternop(cond_expr, if_expr, else_expr, typ) => {
+      // ternary operator
+
+      analyze_expr(id, cond_expr, st);
+      assert!(
+        cond_expr.get_type() == Typ::Bool,
+        "Condition expression in ternary must evaluate to bool."
+      );
+
+      analyze_expr(id, if_expr, st);
+      analyze_expr(id, else_expr, st);
+
+      let e_typ = if_expr.get_type();
+      assert!(
+        e_typ == else_expr.get_type(),
+        "Ternary's arms must be of matching type."
+      );
+      assert!(
+        e_typ != Typ::Void,
+        "Ternary does not support operating over the void type."
+      );
+
+      *typ = Some(e_typ);
+
+      TcResult::ok()
+    }
+    Call(func_id, args, typ) => {
+      // function call
+
+      let (ret_typ, params) = st
+        .get_function_signature(func_id)
+        .expect(&format!("Call to unknown function {func_id}"));
+
+      assert!(
+        args.len() == params.len(),
+        "Mismatching argument list length in function call to {func_id}."
+      );
+
+      for (i, arg) in args.iter_mut().enumerate() {
+        analyze_expr(id, arg, st);
+        assert!(arg.get_type() == params[i]);
+      }
+
+      st.get_function_context(id)
+        .insert_function_call(func_id.to_string());
+
+      *typ = Some(ret_typ);
+      TcResult::ok()
+    }
   }
 }
