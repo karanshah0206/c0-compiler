@@ -160,7 +160,7 @@ pub enum Token<'a> {
     let slice = lex.slice();
     i64::from_str_radix(&slice[2..], 16).ok()
   })]
-  #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
+  #[regex(r"0|[1-9][0-9]*", |lex| lex.slice().parse::<i64>().ok())]
   Number(i64),
   #[token("true")]
   True,
