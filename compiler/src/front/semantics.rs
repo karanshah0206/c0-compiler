@@ -134,6 +134,11 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
     Stmt::Asgn(var_id, asn_op, expr) => {
       // assignment to declared variable
 
+      assert!(
+        st.get_function_context(id).is_var_declared(var_id),
+        "Variable {var_id} not declared in this scope."
+      );
+
       let var_typ = st.get_function_context(id).get_var_type(var_id);
 
       analyze_expr(id, expr, st);
@@ -165,6 +170,11 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
     }
     Stmt::PostOp(var_id, _) => {
       // post-operation (++/--) statement
+
+      assert!(
+        st.get_function_context(id).is_var_declared(var_id),
+        "Variable {var_id} not declared in this scope."
+      );
 
       let var_typ = st.get_function_context(id).get_var_type(var_id);
       assert!(
