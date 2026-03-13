@@ -13,6 +13,7 @@ pub struct Config {
   pub dump_ast: bool,
   pub check: bool,
   pub optimizer_level: u8,
+  pub dump_ir: bool,
   pub target: EmitTarget,
   pub header: Option<String>,
   pub source: Option<String>,
@@ -25,6 +26,7 @@ impl Config {
       dump_ast: false,
       check: false,
       optimizer_level: 0,
+      dump_ir: false,
       target: EmitTarget::Abstract,
       header: None,
       source: None,
@@ -49,6 +51,7 @@ pub fn parse_args() -> Config {
           config.optimizer_level = arg[2..].parse::<u8>().expect("Invalid optimization level")
         }
       }
+      "--dump-ir" => config.dump_ir = true,
       "-e" | "--emit" => {
         if index + 1 < args.len() {
           match args[index + 1].as_str() {

@@ -1,8 +1,7 @@
-#![allow(unused)]
-
 mod args;
 mod common;
 mod front;
+mod intermediate;
 
 use std::{fs, process, thread};
 
