@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::common::{function_context::FunctionContext, symbol_table::SymbolTable};
+use crate::common::symbol_table::SymbolTable;
 use crate::front::ast::*;
 
 /// Perform semantic analysis on the program.

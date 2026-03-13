@@ -216,7 +216,7 @@ impl AsnOp {
   }
 }
 
-// Implementing display for types in AST, useful when compiler is passed the `--dump-assem` flag.
+// Implementing display for types in AST, useful when compiler is passed the `--dump-ast` flag.
 
 impl Display for GlobalDeclaration {
   fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
