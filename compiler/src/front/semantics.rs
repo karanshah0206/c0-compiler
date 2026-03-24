@@ -192,18 +192,6 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       TcResult::ok_def(HashSet::from_iter(vec![var_id.to_string()]))
     }
-    Stmt::Seq(stmt_1, stmt_2) => {
-      // A couple statements in sequence
-
-      let res_1 = analyze_stmt(id, stmt_1, st);
-      if res_1.returns {
-        return res_1;
-      }
-
-      let mut res_2 = analyze_stmt(id, stmt_2, st);
-      res_2.defines.extend(res_1.defines.iter().cloned());
-      res_2
-    }
     Stmt::Cond(cond_expr, if_stmt, else_stmt) => {
       // an if-else statement
 

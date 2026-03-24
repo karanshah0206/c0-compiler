@@ -38,8 +38,6 @@ pub enum Stmt {
   Asgn(Ident, AsnOp, Expr),
   /// Post-operator (++/--
   PostOp(Ident, PostOp),
-  /// Couple ordered statements
-  Seq(Box<Stmt>, Box<Stmt>),
   /// Conditional (bool expression, if-branch, else-branch)
   Cond(Expr, Box<Stmt>, Box<Stmt>),
   /// While loop (bool expression, loop body)
@@ -266,7 +264,6 @@ impl Display for Stmt {
       Stmt::Defn((typ, id), expr) => write!(fmt, "Defn({typ}, \"{id}\", {expr})"),
       Stmt::Asgn(id, asn_op, expr) => write!(fmt, "Asgn(\"{id}\", {asn_op}, {expr})"),
       Stmt::PostOp(id, post_op) => write!(fmt, "PostOp(\"{id}\", {post_op})"),
-      Stmt::Seq(stmt, stmt1) => write!(fmt, "Seq({stmt}, {stmt1})"),
       Stmt::Cond(expr, stmt, stmt1) => write!(fmt, "Cond({expr}, {stmt}, {stmt1})"),
       Stmt::While(expr, stmt) => write!(fmt, "While({expr}, {stmt})"),
       Stmt::For(stmt, expr, stmt1, stmt2) => {
