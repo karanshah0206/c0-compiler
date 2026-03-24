@@ -3,10 +3,10 @@ use std::fmt::{Display, Error, Formatter};
 use crate::front::ast::{BinOp, Ident, Typ, UnOp};
 
 /// Temporary (compiler-generated value store) is an (id, type) tuple.
-type Temp = (usize, Typ);
+pub type Temp = (usize, Typ);
 
 /// Operand to an operator.
-enum Operand {
+pub enum Operand {
   /// Immediate
   Const(i32),
   /// Temporary
@@ -14,7 +14,7 @@ enum Operand {
 }
 
 /// Runtime exception.
-enum Exception {
+pub enum Exception {
   /// Arithmetic exception
   Arith,
   /// Forceful termination exception
@@ -22,10 +22,10 @@ enum Exception {
 }
 
 /// Label identified by a unique integer.
-struct Label(usize);
+pub struct Label(usize);
 
 /// Instructions supported by the three-address IR.
-enum Instr {
+pub enum Instr {
   /// Binary operator
   BinOp {
     op: BinOp,
