@@ -35,3 +35,38 @@ impl BasicBlock {
     }
   }
 }
+
+/// Context for generating intermediate representation in SSA form (Braun et al. technique).
+pub struct IRContext {
+  /// Number of generated temps within context (i.e., id for next temp)
+  temp_counter: usize,
+  /// Number of generated labels within context (i.e., id for next label)
+  label_counter: usize,
+  /// Basic blocks within this context.
+  blocks: HashMap<Label, BasicBlock>,
+  /// Lable of the basic block currently being evaluated.
+  current_block_label: Label,
+  /// "Trivial" Phi nodes that were replaced by their single operand.
+  /// A Phi node is trivial if it just references itself and one other value.
+  trivial_phis: HashMap<Label, Temp>,
+  /// Most recently assigned type in the currently evaluated block for a given variable.
+  latest_var_assignments: HashMap<Ident, Typ>,
+}
+
+impl IRContext {
+  /// Create an IR context with a (sealed, empty) entry block.
+  pub fn new() -> Self {
+    let entry_label = Label(0);
+    let mut entry_block = BasicBlock::new(entry_label);
+    entry_block.sealed = true; // no predecessors to the entry block.
+
+    IRContext {
+      temp_counter: 0,
+      label_counter: 1,
+      blocks: HashMap::from([(entry_label, entry_block)]),
+      current_block_label: entry_label,
+      trivial_phis: HashMap::new(),
+      latest_var_assignments: HashMap::new(),
+    }
+  }
+}

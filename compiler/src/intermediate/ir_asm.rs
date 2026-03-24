@@ -22,7 +22,8 @@ pub enum Exception {
 }
 
 /// Label identified by a unique integer.
-pub struct Label(usize);
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub struct Label(pub usize);
 
 /// Instructions supported by the three-address IR.
 pub enum Instr {
