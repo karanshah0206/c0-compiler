@@ -55,6 +55,13 @@ enum Instr {
   Return(Option<Operand>),
   /// Throw a runtime exception
   Throw(Exception),
+  /// Phi node for control-flow merges
+  Phi {
+    dest: Temp,                  // temp that stores the resolved value
+    srcs: Vec<(Label, Operand)>, // sources (with scope) from where to resolve the dest
+  },
+  /// Copy value from source operand to dest temporary
+  Move { dest: Temp, src: Operand },
 }
 
 // Implementing display for types in AST, useful when compiler is passed the `--dump-ir` flag.
@@ -112,6 +119,19 @@ impl Display for Instr {
         None => write!(fmt, "RETURN"),
       },
       Instr::Throw(e) => write!(fmt, "{e}"),
+      Instr::Phi { dest, srcs } => {
+        write!(
+          fmt,
+          "T{} <- PHI |{}|",
+          dest.0,
+          srcs
+            .iter()
+            .map(|(l, op)| format!("{l} : {op}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+        )
+      }
+      Instr::Move { dest, src } => write!(fmt, "T{} <- {src}", dest.0),
     }
   }
 }
