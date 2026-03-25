@@ -74,9 +74,7 @@ impl IRContext {
   pub fn create_block(&mut self) -> Label {
     let label = Label(self.label_counter);
     self.label_counter += 1;
-
     self.blocks.insert(label, BasicBlock::new(label));
-
     label
   }
 
@@ -186,7 +184,7 @@ impl IRContext {
       return temp.clone();
     }
 
-    // variable not in unsealed block, so creating an incomplete phi to bring it in
+    // variable in unsealed block, so creating an incomplete phi to bring it in
     if !self.blocks.get(&block_label).unwrap().sealed {
       let typ = self.infer_typ(var_id, block_label);
       let phi_temp = self.create_temp(typ);
@@ -197,10 +195,12 @@ impl IRContext {
         .unwrap()
         .incomplete_phis
         .insert(var_id.clone(), phi_temp.clone());
+
+      self.write_variable(var_id, phi_temp.clone(), block_label);
       return phi_temp;
     }
 
-    // variable not in sealed block, so traversing all preds and creating phi node
+    // variable in sealed block, so traversing all preds and creating Phi node
     let preds = self.blocks.get(&block_label).unwrap().preds.clone();
 
     let temp = if preds.len() == 1 {
