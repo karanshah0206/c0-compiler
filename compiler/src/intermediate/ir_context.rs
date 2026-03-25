@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::front::ast::{Ident, Typ};
 use crate::intermediate::ir_asm::{Instr, Label, Operand, Temp};
@@ -68,5 +68,221 @@ impl IRContext {
       trivial_phis: HashMap::new(),
       latest_var_assignments: HashMap::new(),
     }
+  }
+
+  /// Create an unsealed block and return its label.
+  pub fn create_block(&mut self) -> Label {
+    let label = Label(self.label_counter);
+    self.label_counter += 1;
+
+    self.blocks.insert(label, BasicBlock::new(label));
+
+    label
+  }
+
+  /// Add an immediate predecessor block label to the current block.
+  pub fn add_pred_to_block(&mut self, pred_label: Label) {
+    assert!(
+      self.blocks.contains_key(&pred_label),
+      "Attempted adding unknown predecessor block label {pred_label}."
+    );
+    self
+      .blocks
+      .get_mut(&self.current_block_label)
+      .unwrap()
+      .preds
+      .push(pred_label);
+  }
+
+  /// Set the terminator instruction to the current block.
+  pub fn set_block_terminator(&mut self, terminator: Instr) {
+    self
+      .blocks
+      .get_mut(&self.current_block_label)
+      .unwrap()
+      .terminator = Some(terminator);
+  }
+
+  /// Add an instruction to the current block.
+  pub fn add_instr_to_block(&mut self, instr: Instr) {
+    self
+      .blocks
+      .get_mut(&self.current_block_label)
+      .unwrap()
+      .body
+      .push(instr);
+  }
+
+  /// Seal the currently active block and resolve all incomplete phi nodes.
+  pub fn seal_block(&mut self) {
+    let incomplete_phis: HashMap<Ident, Temp> = self
+      .blocks
+      .get_mut(&self.current_block_label)
+      .unwrap()
+      .incomplete_phis
+      .drain()
+      .collect();
+
+    for (var_id, temp) in incomplete_phis {
+      self.resolve_incompete_phi_in_block(var_id, temp, self.current_block_label);
+    }
+
+    self
+      .blocks
+      .get_mut(&self.current_block_label)
+      .unwrap()
+      .sealed = true;
+  }
+
+  /// Switch context from currently active block to block of given label.
+  pub fn switch_to_block(&mut self, label: Label) {
+    assert!(
+      self.blocks.contains_key(&label),
+      "Attemped switching to unknown block {label}."
+    );
+    self.current_block_label = label;
+  }
+
+  /// Create and return new temporary of a given type.
+  pub fn create_temp(&mut self, typ: Typ) -> Temp {
+    let temp: Temp = (self.temp_counter, typ);
+    self.temp_counter += 1;
+    temp
+  }
+
+  /// Record that variable `var_id` maps to `temp` in block with label `block_label`.
+  pub fn write_variable(&mut self, var_id: Ident, temp: Temp, block_label: Label) {
+    assert!(
+      self.blocks.contains_key(&block_label),
+      "Attempted to write variable to unknown block label {block_label}."
+    );
+
+    self
+      .latest_var_assignments
+      .insert(var_id.clone(), temp.1.clone());
+
+    self
+      .blocks
+      .get_mut(&block_label)
+      .unwrap()
+      .current_def
+      .insert(var_id, temp);
+  }
+
+  /// Get the temp assigned to a variable with block with label `block_label`.
+  pub fn read_variable(&mut self, var_id: &Ident, block_label: Label) -> Temp {
+    assert!(
+      self.blocks.contains_key(&block_label),
+      "Attempted to read variable from unknown block label {block_label}."
+    );
+
+    // variable already within block
+    if let Some(temp) = self
+      .blocks
+      .get(&block_label)
+      .and_then(|block| block.current_def.get(var_id))
+    {
+      return temp.clone();
+    }
+
+    // variable not in unsealed block, so creating an incomplete phi to bring it in
+    if !self.blocks.get(&block_label).unwrap().sealed {
+      let typ = self.infer_typ(var_id, block_label);
+      let phi_temp = self.create_temp(typ);
+
+      self
+        .blocks
+        .get_mut(&block_label)
+        .unwrap()
+        .incomplete_phis
+        .insert(var_id.clone(), phi_temp.clone());
+      return phi_temp;
+    }
+
+    // variable not in sealed block, so traversing all preds and creating phi node
+    let preds = self.blocks.get(&block_label).unwrap().preds.clone();
+
+    let temp = if preds.len() == 1 {
+      self.read_variable(var_id, preds[0])
+    } else {
+      let typ = self.infer_typ(var_id, block_label);
+      let phi_temp = self.create_temp(typ);
+
+      self.write_variable(var_id.clone(), phi_temp.clone(), block_label);
+      self.resolve_incompete_phi_in_block(var_id.clone(), phi_temp, block_label)
+    };
+
+    self.write_variable(var_id.clone(), temp.clone(), block_label);
+    temp
+  }
+
+  /// Add operand to incomplete phi in block with label `block_label`.
+  fn resolve_incompete_phi_in_block(
+    &mut self,
+    var_id: Ident,
+    phi_temp: Temp,
+    block_label: Label,
+  ) -> Temp {
+    assert!(
+      self.blocks.contains_key(&block_label),
+      "Attempted to resolve incomplete phi in unknown block label {block_label}."
+    );
+
+    let pred_block_labels = self.blocks.get(&block_label).unwrap().preds.clone();
+
+    // get uses of var in predecessor blocks
+    let srcs: Vec<(Label, Operand)> = pred_block_labels
+      .iter()
+      .map(|pred_block_label| {
+        (
+          *pred_block_label,
+          Operand::Temp(self.read_variable(&var_id, *pred_block_label)),
+        )
+      })
+      .collect();
+
+    let block_body = &mut self.blocks.get_mut(&block_label).unwrap().body;
+
+    if let Some(Instr::Phi { srcs: phi_srcs, .. }) = block_body
+      .iter_mut()
+      .find(|i| matches!(i, Instr::Phi { dest, .. } if dest.0 == phi_temp.0))
+    {
+      // resolve the incomplete phi with the predecessor operands
+      *phi_srcs = srcs;
+    } else {
+      // phi not yet constructed, so inserting at the top of the block
+      block_body.insert(
+        0,
+        Instr::Phi {
+          dest: phi_temp.clone(),
+          srcs,
+        },
+      );
+    }
+
+    phi_temp
+  }
+
+  /// Infer the type of a variable within block with label `block_label`.
+  fn infer_typ(&self, var_id: &Ident, block_label: Label) -> Typ {
+    assert!(
+      self.blocks.contains_key(&block_label),
+      "Attempted to infer type of variable {var_id} within unknown block label {block_label}."
+    );
+
+    if let Some(temp) = self
+      .blocks
+      .get(&block_label)
+      .and_then(|block| block.current_def.get(var_id))
+    {
+      return temp.1.clone();
+    }
+
+    if let Some(typ) = self.latest_var_assignments.get(var_id) {
+      return typ.clone();
+    }
+
+    // should never reach here if the semantic analysis and typechecker pass.
+    unreachable!("Failed to ingfer type of variable {var_id} within block label {block_label}.");
   }
 }
