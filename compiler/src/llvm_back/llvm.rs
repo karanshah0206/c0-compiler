@@ -35,6 +35,7 @@ fn emit_operand_of_typ(op: &Operand, typ: &Typ) -> String {
   }
 }
 
+/// Stringify an immediate of a given type.
 fn emit_const_of_typ(value: i32, typ: &Typ) -> String {
   match typ {
     Typ::Bool => {
@@ -78,6 +79,26 @@ fn emit_i32(op: &Operand) -> String {
     Operand::Temp((id, typ)) => match typ {
       Typ::Int => format!("%t{}", id),
       _ => unreachable!("Typechecker erroneously allows non-int expressions where unacceptable."),
+    },
+  }
+}
+
+/// Stringify an operand as an i32 (cast booleans into i32, ints remain unchanged)
+fn cast_to_i32(op: &Operand, aux_counter: &mut usize) -> (String, String) {
+  match op {
+    Operand::Const(value) => (value.to_string(), String::new()),
+    Operand::Temp((id, typ)) => match typ {
+      Typ::Bool => {
+        let temp_casted = format!("%aux{}", *aux_counter);
+        *aux_counter += 1;
+        (
+          temp_casted.clone(),
+          format!("\t{temp_casted} = zext i1 %t{id} to i32\n"),
+        )
+      }
+      Typ::Int => (format!("%t{id}"), String::new()),
+      Typ::Void => unreachable!("Cannot cast from void to boolean."),
+      Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
     },
   }
 }
@@ -135,6 +156,7 @@ pub fn generate_llvm(
   }
 
   let mut needs_abort = false;
+  let mut aux_counter = 0usize;
 
   for (func_name, func_ir) in program_ir {
     let (return_type, params) = symbol_table.get_function_signature(func_name).unwrap();
@@ -158,6 +180,7 @@ pub fn generate_llvm(
         &source_defined,
         &return_type,
         &mut needs_abort,
+        &mut aux_counter,
       ));
     }
     out.push_str("}\n\n");
@@ -194,12 +217,14 @@ fn collect_function_signatures(
   }
 }
 
+/// Generate LLVM instructions from IR instructions.
 fn generate_instr(
   instr: &Instr,
   function_signatures: &HashMap<Ident, FunctionSignature>,
   source_defined: &HashSet<&Ident>,
   return_type: &Typ,
   needs_abort: &mut bool,
+  aux_counter: &mut usize,
 ) -> String {
   match instr {
     Instr::BinOp { op, dest, lhs, rhs } => match op {
@@ -215,8 +240,8 @@ fn generate_instr(
         format!("\t%t{} = {llvm_op} i1 {lhs}, {rhs}\n", dest.0)
       }
       BinOp::CmpEq | BinOp::CmpNeq | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte => {
-        let lhs = emit_i32(lhs);
-        let rhs = emit_i32(rhs);
+        let (lhs, lhs_cast) = cast_to_i32(lhs, aux_counter);
+        let (rhs, rhs_cast) = cast_to_i32(rhs, aux_counter);
 
         let llvm_op = match op {
           BinOp::CmpEq => "eq",
@@ -228,7 +253,14 @@ fn generate_instr(
           _ => unreachable!(),
         };
 
-        format!("\t%t{} = icmp {llvm_op} i32 {lhs}, {rhs}\n", dest.0)
+        let mut out = String::new();
+        out.push_str(&lhs_cast);
+        out.push_str(&rhs_cast);
+        out.push_str(&format!(
+          "\t%t{} = icmp {llvm_op} i32 {lhs}, {rhs}\n",
+          dest.0
+        ));
+        out
       }
       _ => {
         let lhs = emit_i32(lhs);
