@@ -45,7 +45,7 @@ pub enum Instr {
   JumpIf {
     pred: Operand,
     holds: Label,
-    fails: Option<Label>,
+    fails: Label,
   },
   /// Function call
   Call {
@@ -107,10 +107,7 @@ impl Display for Instr {
       Instr::UnOp { op, dest, src } => write!(fmt, "T{} <- {op}{src}", dest.0),
       Instr::Label(label) => write!(fmt, "{label}"),
       Instr::JumpTo(l) => write!(fmt, "JUMP {l}"),
-      Instr::JumpIf { pred, holds, fails } => match fails {
-        Some(fails) => write!(fmt, "IF {pred} JUMP {holds} ELSE {fails}"),
-        None => write!(fmt, "IF {pred} JUMP {holds}"),
-      },
+      Instr::JumpIf { pred, holds, fails } => write!(fmt, "IF {pred} JUMP {holds} ELSE {fails}"),
       Instr::Call { dest, name, args } => match dest {
         Some(dest) => write!(fmt, "T{} <- CALL {name}({})", dest.0, display_args(args)),
         None => write!(fmt, "CALL {name}({})", display_args(args)),

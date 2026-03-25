@@ -299,15 +299,12 @@ fn generate_instr(
     },
     Instr::Label(label) => format!("L{}:\n", label.0),
     Instr::JumpTo(label) => format!("\tbr label %L{}\n", label.0),
-    Instr::JumpIf { pred, holds, fails } => match fails {
-      Some(fails) => format!(
-        "\tbr i1 {}, label %L{}, label %L{}\n",
-        emit_i1(pred),
-        holds.0,
-        fails.0
-      ),
-      _ => format!("\tbr i1 {}, label %L{}\n", emit_i1(pred), holds.0),
-    },
+    Instr::JumpIf { pred, holds, fails } => format!(
+      "\tbr i1 {}, label %L{}, label %L{}\n",
+      emit_i1(pred),
+      holds.0,
+      fails.0
+    ),
     Instr::Call { dest, name, args } => {
       let function_signature = function_signatures.get(name).unwrap();
       let mut arg_strings = Vec::with_capacity(function_signature.param_typs.len());

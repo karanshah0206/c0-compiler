@@ -485,9 +485,7 @@ impl IRContext {
       Some(Instr::JumpTo(label)) => vec![*label],
       Some(Instr::JumpIf { holds, fails, .. }) => {
         let mut successors = vec![*holds];
-        if let Some(fails) = fails {
-          successors.push(*fails);
-        }
+        successors.push(*fails);
         successors
       }
       _ => vec![],

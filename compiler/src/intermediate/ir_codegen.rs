@@ -107,7 +107,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: if_label,
-        fails: Some(else_label),
+        fails: else_label,
       });
 
       // evaluate if block
@@ -161,7 +161,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: body_label,
-        fails: Some(exit_label),
+        fails: exit_label,
       });
       let header_end_label = ctx.current_block_label;
 
@@ -210,7 +210,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: body_label,
-        fails: Some(exit_label),
+        fails: exit_label,
       });
       let header_end_label = ctx.current_block_label;
 
@@ -279,7 +279,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: pass_label,
-        fails: Some(fail_label),
+        fails: fail_label,
       });
 
       // evaluate fail block
@@ -343,7 +343,7 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: if_label,
-        fails: Some(else_label),
+        fails: else_label,
       });
 
       // evaluate if block
@@ -426,12 +426,12 @@ fn short_circuit_binop(
     BinOp::LAnd => ctx.set_block_terminator(Instr::JumpIf {
       pred: lhs,
       holds: rhs_label,
-      fails: Some(short_circuit_label),
+      fails: short_circuit_label,
     }),
     BinOp::LOr => ctx.set_block_terminator(Instr::JumpIf {
       pred: lhs,
       holds: short_circuit_label,
-      fails: Some(rhs_label),
+      fails: rhs_label,
     }),
     _ => unreachable!("Cannot short-circuit evaluation of non-logical binop in IR codegen."),
   };
