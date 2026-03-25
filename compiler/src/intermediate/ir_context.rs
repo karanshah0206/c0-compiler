@@ -46,9 +46,9 @@ pub struct IRContext {
   blocks: HashMap<Label, BasicBlock>,
   /// Lable of the basic block currently being evaluated.
   pub current_block_label: Label,
-  /// "Trivial" Phi nodes that were replaced by their single operand.
-  /// A Phi node is trivial if it just references itself and one other value.
-  trivial_phis: HashMap<Label, Temp>,
+  /// "Trivial" Phi nodes to replace with their single operand.
+  /// A Phi node is trivial if it just references itself or a single other value.
+  trivial_phis: HashMap<usize, Temp>,
   /// Most recently assigned type in the currently evaluated block for a given variable.
   latest_var_assignments: HashMap<Ident, Typ>,
 }
@@ -115,20 +115,28 @@ impl IRContext {
   pub fn seal_block(&mut self, block_label: Label) {
     assert!(
       self.blocks.contains_key(&block_label),
-      "Attempted to seal block unknown label {block_label}."
+      "Attempted to seal block with unknown label {block_label}."
     );
 
     let incomplete_phis: HashMap<Ident, Temp> = self
       .blocks
+      .get(&block_label)
+      .unwrap()
+      .incomplete_phis
+      .iter()
+      .map(|(v, t)| (v.clone(), t.clone()))
+      .collect();
+
+    for (var_id, phi_temp) in incomplete_phis {
+      self.resolve_incompete_phi_in_block(var_id, phi_temp, block_label);
+    }
+
+    self
+      .blocks
       .get_mut(&block_label)
       .unwrap()
       .incomplete_phis
-      .drain()
-      .collect();
-
-    for (var_id, temp) in incomplete_phis {
-      self.resolve_incompete_phi_in_block(var_id, temp, block_label);
-    }
+      .clear();
 
     self.blocks.get_mut(&block_label).unwrap().sealed = true;
   }
@@ -181,7 +189,7 @@ impl IRContext {
       .get(&block_label)
       .and_then(|block| block.current_def.get(var_id))
     {
-      return temp.clone();
+      return self.resolve_phi_temp(temp.clone());
     }
 
     // variable in unsealed block, so creating an incomplete phi to bring it in
@@ -217,6 +225,75 @@ impl IRContext {
     temp
   }
 
+  /// Apply all remaining trivial Phi replacements globally within the context.
+  pub fn finalize_trivial_phis(&mut self) {
+    if self.trivial_phis.is_empty() {
+      return;
+    }
+
+    let trivial_phis = self.trivial_phis.clone();
+
+    let resolve_temp = |mut temp: Temp| {
+      loop {
+        match trivial_phis.get(&temp.0) {
+          Some(next_in_chain) => temp = next_in_chain.clone(),
+          None => return temp,
+        }
+      }
+    };
+
+    let resolve_op = |op: &mut Operand| {
+      if let Operand::Temp(temp) = op {
+        *temp = resolve_temp(temp.clone());
+      }
+    };
+
+    let resolve_instr = |instr: &mut Instr| match instr {
+      Instr::Label(_) | Instr::JumpTo(_) | Instr::Throw(_) => {}
+      Instr::BinOp { lhs, rhs, .. } => {
+        resolve_op(lhs);
+        resolve_op(rhs);
+      }
+      Instr::UnOp { src, .. } => resolve_op(src),
+      Instr::Call { args, .. } => {
+        for arg in args.iter_mut() {
+          resolve_op(arg);
+        }
+      }
+      Instr::Return(operand) => {
+        if let Some(operand) = operand.as_mut() {
+          resolve_op(operand);
+        }
+      }
+      Instr::JumpIf { pred, .. } => resolve_op(pred),
+      Instr::Phi { srcs, .. } => {
+        for (_, operand) in srcs.iter_mut() {
+          resolve_op(operand);
+        }
+      }
+      Instr::Move { src, .. } => resolve_op(src),
+    };
+
+    for block in self.blocks.values_mut() {
+      for val in block.current_def.values_mut() {
+        *val = resolve_temp(val.clone());
+      }
+
+      block.body.retain(|instr| match instr {
+        Instr::Phi { dest, .. } => !trivial_phis.contains_key(&dest.0),
+        _ => true,
+      });
+
+      for instr in block.body.iter_mut() {
+        resolve_instr(instr);
+      }
+
+      if let Some(terminator) = block.terminator.as_mut() {
+        resolve_instr(terminator);
+      }
+    }
+  }
+
   /// Add operand to incomplete phi in block with label `block_label`.
   fn resolve_incompete_phi_in_block(
     &mut self,
@@ -246,7 +323,7 @@ impl IRContext {
 
     if let Some(Instr::Phi { srcs: phi_srcs, .. }) = block_body
       .iter_mut()
-      .find(|i| matches!(i, Instr::Phi { dest, .. } if dest.0 == phi_temp.0))
+      .find(|instr| matches!(instr, Instr::Phi { dest, .. } if dest.0 == phi_temp.0))
     {
       // resolve the incomplete phi with the predecessor operands
       *phi_srcs = srcs;
@@ -261,7 +338,82 @@ impl IRContext {
       );
     }
 
-    phi_temp
+    self.try_remove_trivial_phi(phi_temp)
+  }
+
+  /// Try removing phi node if trivial (i.e., self-referential or only one src) and return resolved temp.
+  fn try_remove_trivial_phi(&mut self, phi_temp: Temp) -> Temp {
+    let (phi_block_label, srcs): (Label, Vec<Temp>) = {
+      let mut found: Option<(Label, Vec<(Label, Operand)>)> = None;
+
+      for (block_label, block) in self.blocks.iter() {
+        if let Some(Instr::Phi { srcs, .. }) = block
+          .body
+          .iter()
+          .find(|instr| matches!(instr, Instr::Phi { dest, .. } if dest.0 == phi_temp.0))
+        {
+          found = Some((*block_label, srcs.clone()));
+          break;
+        }
+      }
+
+      match found {
+        Some((block_label, srcs)) => {
+          let filtered = srcs
+            .iter()
+            .filter_map(|(_, op)| {
+              if let Operand::Temp(temp) = op {
+                if temp.0 != phi_temp.0 {
+                  Some(temp.clone())
+                } else {
+                  None
+                }
+              } else {
+                None
+              }
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+          (block_label, filtered)
+        }
+        None => return phi_temp,
+      }
+    };
+
+    let resolved: Vec<Temp> = srcs
+      .iter()
+      .map(|temp| self.resolve_phi_temp(temp.clone()))
+      .collect::<HashSet<_>>()
+      .into_iter()
+      .collect();
+
+    if resolved.len() != 1 {
+      return phi_temp;
+    }
+
+    let resolved_identical_temp = resolved.into_iter().next().unwrap();
+    if let Some(block) = self.blocks.get_mut(&phi_block_label) {
+      block
+        .body
+        .retain(|instr| !matches!(instr, Instr::Phi { dest, .. } if dest.0 == phi_temp.0));
+    }
+
+    self
+      .trivial_phis
+      .insert(phi_temp.0, resolved_identical_temp.clone());
+
+    resolved_identical_temp
+  }
+
+  /// Resolve phi temp from its replacement chain (if any).
+  fn resolve_phi_temp(&mut self, mut phi_temp: Temp) -> Temp {
+    loop {
+      match self.trivial_phis.get(&phi_temp.0) {
+        Some(next_in_chain) => phi_temp = next_in_chain.clone(),
+        None => return phi_temp,
+      }
+    }
   }
 
   /// Infer the type of a variable within block with label `block_label`.
