@@ -6,6 +6,7 @@ use crate::common::symbol_table::SymbolTable;
 use crate::front::ast::Ident;
 use crate::intermediate::{ir_asm::Instr, ir_context::IRContext};
 
+/// Emit intermediate representation.
 pub fn emit_ir(
   filename: String,
   program_ir: HashMap<Ident, IRContext>,
@@ -32,5 +33,13 @@ pub fn emit_ir(
     writeln!(writer)?;
   }
 
+  Ok(())
+}
+
+/// Emit LLVM.
+pub fn emit_llvm(filename: String, llvm_str: String) -> Result<()> {
+  let file = File::create(format!("{filename}.ll")).unwrap();
+  let mut writer = BufWriter::new(file);
+  write!(writer, "{llvm_str}")?;
   Ok(())
 }

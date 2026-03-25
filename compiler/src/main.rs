@@ -3,6 +3,7 @@ mod common;
 mod emit;
 mod front;
 mod intermediate;
+mod llvm_back;
 
 use std::{fs, process, thread};
 
@@ -10,6 +11,7 @@ use logos::Logos;
 
 use crate::front::{lexer::Token, parser::parse, semantics};
 use crate::intermediate::ir_codegen;
+use crate::llvm_back::llvm::generate_llvm;
 
 fn main() {
   let config = args::parse_args();
@@ -80,7 +82,10 @@ fn main() {
           emit::emit_ir(config.source.unwrap(), program_ir, symbol_table).is_err() as i32
         }
         args::EmitTarget::X86_64 => todo!(),
-        args::EmitTarget::LLVM => todo!(),
+        args::EmitTarget::LLVM => {
+          let llvm_str = generate_llvm(&header_ast, &source_ast, &program_ir, &symbol_table);
+          emit::emit_llvm(config.source.unwrap(), llvm_str).is_err() as i32
+        }
       }
     })
     .unwrap();
