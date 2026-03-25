@@ -10,7 +10,7 @@ pub type Ident = String;
 pub type Variable = (Typ, Ident);
 
 /// Primitive types supported by the language (and typedefs).
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Typ {
   Void,
   Int,

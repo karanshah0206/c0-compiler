@@ -1,5 +1,6 @@
 mod args;
 mod common;
+mod emit;
 mod front;
 mod intermediate;
 
@@ -22,7 +23,7 @@ fn main() {
         "".to_string()
       };
       let source_str =
-        fs::read_to_string(config.source.unwrap()).expect("Could not read source file.");
+        fs::read_to_string(config.source.clone().unwrap()).expect("Could not read source file.");
 
       // 1. Lexical analysis
       let header_token_stream = Token::lexer(&header_str)
@@ -62,10 +63,11 @@ fn main() {
         return 0;
       }
 
+      // 4. Lower AST to IR
       let program_ir = ir_codegen::munch_program(&source_ast, &symbol_table);
 
       if config.dump_ir {
-        for (func_name, func_ir) in program_ir {
+        for (func_name, func_ir) in &program_ir {
           println!("{func_name}");
           for ir_instr in func_ir.linearize() {
             println!("\t{ir_instr}");
@@ -73,7 +75,13 @@ fn main() {
         }
       }
 
-      return 0;
+      match config.target {
+        args::EmitTarget::Abstract => {
+          emit::emit_ir(config.source.unwrap(), program_ir, symbol_table).is_err() as i32
+        }
+        args::EmitTarget::X86_64 => todo!(),
+        args::EmitTarget::LLVM => todo!(),
+      }
     })
     .unwrap();
 
