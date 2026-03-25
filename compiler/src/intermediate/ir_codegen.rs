@@ -41,6 +41,8 @@ fn munch_ast(typ: &Typ, params: &[Variable], body: &Stmt) -> IRContext {
     ctx.set_block_terminator(Instr::Return(None));
   }
 
+  ctx.finalize_trivial_phis();
+
   ctx
 }
 
@@ -85,12 +87,12 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
 
       ctx.add_instr_to_block(Instr::BinOp {
         op: post_op.to_binop(),
-        dest,
+        dest: dest.clone(),
         lhs: Operand::Temp(operand_temp.clone()),
         rhs: Operand::Const(1), // currently post-ops are only inc/dec
       });
 
-      ctx.write_variable(var_id, operand_temp, ctx.current_block_label);
+      ctx.write_variable(var_id, dest, ctx.current_block_label);
 
       false
     }
@@ -224,9 +226,13 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
         ctx.add_pred_to_block(body_end_label);
         ctx.seal_block(step_label); // only predecessor is body_end block
 
-        if let Some(step_stmt) = step_stmt.as_ref()
-          && !munch_stmt(step_stmt, ctx)
-        {
+        let step_terminates = if let Some(step_stmt) = step_stmt.as_ref() {
+          munch_stmt(step_stmt, ctx)
+        } else {
+          false
+        };
+
+        if !step_terminates {
           // if step doesn't terminate, we add a back-edge from step to header
           let step_end_label = ctx.current_block_label;
           ctx.set_block_terminator(Instr::JumpTo(header_label));
