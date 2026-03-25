@@ -326,14 +326,14 @@ fn generate_instr(
         format!(
           "\t%t{} = call {} @{}({})\n",
           dest.0,
-          llvm_type(return_type),
+          llvm_type(&function_signature.return_typ),
           callee,
           arg_strings.join(", ")
         )
       } else {
         format!(
           "\tcall {} @{}({})\n",
-          llvm_type(return_type),
+          llvm_type(&function_signature.return_typ),
           callee,
           arg_strings.join(", ")
         )
