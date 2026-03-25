@@ -62,7 +62,16 @@ fn main() {
         return 0;
       }
 
-      ir_codegen::munch_program(&source_ast, &symbol_table);
+      let program_ir = ir_codegen::munch_program(&source_ast, &symbol_table);
+
+      if config.dump_ir {
+        for (func_name, func_ir) in program_ir {
+          println!("{func_name}");
+          for ir_instr in func_ir.linearize() {
+            println!("\t{ir_instr}");
+          }
+        }
+      }
 
       return 0;
     })

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::front::ast::{Ident, Typ};
 use crate::intermediate::ir_asm::{Instr, Label, Operand, Temp};
@@ -285,5 +285,60 @@ impl IRContext {
 
     // should never reach here if the semantic analysis and typechecker pass.
     unreachable!("Failed to ingfer type of variable {var_id} within block label {block_label}.");
+  }
+
+  /// Transform CFG into linearized IR in reverse post-order from entry block.
+  pub fn linearize(&self) -> Vec<Instr> {
+    let mut linear_ir = Vec::new();
+    for label in self.get_reachable_in_rpo() {
+      let block = self.blocks.get(&label).unwrap();
+      linear_ir.push(Instr::Label(block.label));
+      linear_ir.extend(block.body.clone());
+      if let Some(terminator) = &block.terminator {
+        linear_ir.push(terminator.clone());
+      }
+    }
+    linear_ir
+  }
+
+  /// Get labels of reachable blocks in reverse post-order entry block.
+  fn get_reachable_in_rpo(&self) -> Vec<Label> {
+    let mut visited: HashSet<Label> = HashSet::new();
+    let mut order: Vec<Label> = Vec::new();
+    self.reachable_generator_dfs(Label(0), &mut visited, &mut order);
+    order.reverse();
+    order
+  }
+
+  /// Helper to generate successor blocks in order when linearlizing IR.
+  fn reachable_generator_dfs(
+    &self,
+    label: Label,
+    visited: &mut HashSet<Label>,
+    order: &mut Vec<Label>,
+  ) {
+    if visited.insert(label)
+      && let Some(block) = self.blocks.get(&label)
+    {
+      for successor in self.get_successors_of_block(&block) {
+        self.reachable_generator_dfs(successor, visited, order);
+      }
+      order.push(block.label);
+    }
+  }
+
+  /// Get labels of direct successors of given block.
+  fn get_successors_of_block(&self, block: &BasicBlock) -> Vec<Label> {
+    match &block.terminator {
+      Some(Instr::JumpTo(label)) => vec![*label],
+      Some(Instr::JumpIf { holds, fails, .. }) => {
+        let mut successors = vec![*holds];
+        if let Some(fails) = fails {
+          successors.push(*fails);
+        }
+        successors
+      }
+      _ => vec![],
+    }
   }
 }

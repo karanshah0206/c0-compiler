@@ -67,6 +67,7 @@ pub fn parse_args() -> Config {
       }
       "-eabs" => config.target = EmitTarget::Abstract,
       "-ex86-64" => config.target = EmitTarget::X86_64,
+      "-ellvm" => config.target = EmitTarget::LLVM,
       "-l" | "--link" => {
         if index + 1 < args.len() {
           config.header = Some(args[index + 1].clone());

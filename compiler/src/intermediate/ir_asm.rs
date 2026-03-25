@@ -6,6 +6,7 @@ use crate::front::ast::{BinOp, Ident, Typ, UnOp};
 pub type Temp = (usize, Typ);
 
 /// Operand to an operator.
+#[derive(Clone)]
 pub enum Operand {
   /// Immediate
   Const(i32),
@@ -14,6 +15,7 @@ pub enum Operand {
 }
 
 /// Runtime exception.
+#[derive(Clone)]
 pub enum Exception {
   /// Arithmetic exception
   Arith,
@@ -26,6 +28,7 @@ pub enum Exception {
 pub struct Label(pub usize);
 
 /// Instructions supported by the three-address IR.
+#[derive(Clone)]
 pub enum Instr {
   /// Binary operator
   BinOp {
