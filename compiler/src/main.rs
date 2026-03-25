@@ -5,7 +5,7 @@ mod front;
 mod intermediate;
 mod llvm_back;
 
-use std::{fs, process, thread};
+use std::{fs, process, thread, time};
 
 use logos::Logos;
 
@@ -15,6 +15,15 @@ use crate::llvm_back::llvm::generate_llvm;
 
 fn main() {
   let config = args::parse_args();
+
+  // Helper macro to time evaluating an expression
+  macro_rules! time {
+    ( $x:expr ) => {{
+      let t1 = time::SystemTime::now();
+      let result = $x;
+      (result, t1.elapsed().unwrap())
+    }};
+  }
 
   let compiler_thread = thread::Builder::new()
     .stack_size(256 * 1024 * 1024)
@@ -28,36 +37,55 @@ fn main() {
         fs::read_to_string(config.source.clone().unwrap()).expect("Could not read source file.");
 
       // 1. Lexical analysis
-      let header_token_stream = Token::lexer(&header_str)
-        .spanned()
-        .map(|(t, y)| (y.start, t.expect("Badly formatted header code."), y.end));
-      let source_token_stream = Token::lexer(&source_str)
-        .spanned()
-        .map(|(t, y)| (y.start, t.expect("Badly formatted source code."), y.end));
+      let (header_token_stream, header_lex_time) =
+        time!(Token::lexer(&header_str).spanned().map(|(t, y)| (
+          y.start,
+          t.expect("Badly formatted header code."),
+          y.end
+        )));
+      let (source_token_stream, source_lex_time) =
+        time!(Token::lexer(&source_str).spanned().map(|(t, y)| (
+          y.start,
+          t.expect("Badly formatted source code."),
+          y.end
+        )));
 
       // 2. Syntactic analysis
-      let mut header_ast = match parse(header_token_stream) {
+      let (mut header_ast, header_parse_time) = time!(match parse(header_token_stream) {
         Ok(header_ast) => header_ast,
         Err(e) => {
           eprintln!("Syntax error in header file. {e}");
           return 1;
         }
-      };
-      let mut source_ast = match parse(source_token_stream) {
+      });
+      let (mut source_ast, source_parse_time) = time!(match parse(source_token_stream) {
         Ok(source_ast) => source_ast,
         Err(e) => {
           eprintln!("Syntax error in source file. {e}");
           return 1;
         }
-      };
+      });
 
       // 3. Semantic analysis
-      let symbol_table = semantics::analyze_program(&mut header_ast, &mut source_ast);
+      let (symbol_table, sema_time) =
+        time!(semantics::analyze_program(&mut header_ast, &mut source_ast));
 
       if config.dump_ast {
         for ast in &source_ast {
           println!("{ast}");
         }
+      }
+
+      if config.verbose {
+        println!(
+          "Lexing time: {}us",
+          header_lex_time.as_micros() + source_lex_time.as_micros()
+        );
+        println!(
+          "Parsing time: {}us",
+          header_parse_time.as_micros() + source_parse_time.as_micros()
+        );
+        println!("Semantics time: {}us", sema_time.as_micros());
       }
 
       if config.check {
@@ -66,7 +94,7 @@ fn main() {
       }
 
       // 4. Lower AST to IR
-      let program_ir = ir_codegen::munch_program(&source_ast, &symbol_table);
+      let (program_ir, ir_gen_time) = time!(ir_codegen::munch_program(&source_ast, &symbol_table));
 
       if config.dump_ir {
         for (func_name, func_ir) in &program_ir {
@@ -77,13 +105,27 @@ fn main() {
         }
       }
 
+      if config.verbose {
+        println!("IR generation time: {}us", ir_gen_time.as_micros());
+      }
+
       match config.target {
         args::EmitTarget::Abstract => {
           emit::emit_ir(config.source.unwrap(), program_ir, symbol_table).is_err() as i32
         }
         args::EmitTarget::X86_64 => todo!(),
         args::EmitTarget::LLVM => {
-          let llvm_str = generate_llvm(&header_ast, &source_ast, &program_ir, &symbol_table);
+          let (llvm_str, codegen_time) = time!(generate_llvm(
+            &header_ast,
+            &source_ast,
+            &program_ir,
+            &symbol_table
+          ));
+
+          if config.verbose {
+            println!("LLVM codegen time: {}us", codegen_time.as_micros());
+          }
+
           emit::emit_llvm(config.source.unwrap(), llvm_str).is_err() as i32
         }
       }
