@@ -45,7 +45,7 @@ pub struct IRContext {
   /// Basic blocks within this context.
   blocks: HashMap<Label, BasicBlock>,
   /// Lable of the basic block currently being evaluated.
-  current_block_label: Label,
+  pub current_block_label: Label,
   /// "Trivial" Phi nodes that were replaced by their single operand.
   /// A Phi node is trivial if it just references itself and one other value.
   trivial_phis: HashMap<Label, Temp>,
@@ -113,25 +113,26 @@ impl IRContext {
       .push(instr);
   }
 
-  /// Seal the currently active block and resolve all incomplete phi nodes.
-  pub fn seal_block(&mut self) {
+  /// Seal the block with label `block_label` and resolve all incomplete phi nodes.
+  pub fn seal_block(&mut self, block_label: Label) {
+    assert!(
+      self.blocks.contains_key(&block_label),
+      "Attempted to seal block unknown label {block_label}."
+    );
+
     let incomplete_phis: HashMap<Ident, Temp> = self
       .blocks
-      .get_mut(&self.current_block_label)
+      .get_mut(&block_label)
       .unwrap()
       .incomplete_phis
       .drain()
       .collect();
 
     for (var_id, temp) in incomplete_phis {
-      self.resolve_incompete_phi_in_block(var_id, temp, self.current_block_label);
+      self.resolve_incompete_phi_in_block(var_id, temp, block_label);
     }
 
-    self
-      .blocks
-      .get_mut(&self.current_block_label)
-      .unwrap()
-      .sealed = true;
+    self.blocks.get_mut(&block_label).unwrap().sealed = true;
   }
 
   /// Switch context from currently active block to block of given label.
@@ -151,7 +152,7 @@ impl IRContext {
   }
 
   /// Record that variable `var_id` maps to `temp` in block with label `block_label`.
-  pub fn write_variable(&mut self, var_id: Ident, temp: Temp, block_label: Label) {
+  pub fn write_variable(&mut self, var_id: &Ident, temp: Temp, block_label: Label) {
     assert!(
       self.blocks.contains_key(&block_label),
       "Attempted to write variable to unknown block label {block_label}."
@@ -166,7 +167,7 @@ impl IRContext {
       .get_mut(&block_label)
       .unwrap()
       .current_def
-      .insert(var_id, temp);
+      .insert(var_id.to_string(), temp);
   }
 
   /// Get the temp assigned to a variable with block with label `block_label`.
@@ -208,11 +209,11 @@ impl IRContext {
       let typ = self.infer_typ(var_id, block_label);
       let phi_temp = self.create_temp(typ);
 
-      self.write_variable(var_id.clone(), phi_temp.clone(), block_label);
+      self.write_variable(var_id, phi_temp.clone(), block_label);
       self.resolve_incompete_phi_in_block(var_id.clone(), phi_temp, block_label)
     };
 
-    self.write_variable(var_id.clone(), temp.clone(), block_label);
+    self.write_variable(var_id, temp.clone(), block_label);
     temp
   }
 

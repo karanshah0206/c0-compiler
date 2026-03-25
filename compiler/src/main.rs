@@ -8,6 +8,7 @@ use std::{fs, process, thread};
 use logos::Logos;
 
 use crate::front::{lexer::Token, parser::parse, semantics};
+use crate::intermediate::ir_codegen;
 
 fn main() {
   let config = args::parse_args();
@@ -51,7 +52,7 @@ fn main() {
       let symbol_table = semantics::analyze_program(&mut header_ast, &mut source_ast);
 
       if config.dump_ast {
-        for ast in source_ast {
+        for ast in &source_ast {
           println!("{ast}");
         }
       }
@@ -60,6 +61,8 @@ fn main() {
         println!("Semantic analysis passes.");
         return 0;
       }
+
+      ir_codegen::munch_program(&source_ast, &symbol_table);
 
       return 0;
     })
