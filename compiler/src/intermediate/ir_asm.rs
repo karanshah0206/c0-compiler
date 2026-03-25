@@ -17,8 +17,6 @@ pub enum Operand {
 /// Runtime exception.
 #[derive(Clone)]
 pub enum Exception {
-  /// Arithmetic exception
-  Arith,
   /// Forceful termination exception
   Abort,
 }
@@ -82,7 +80,6 @@ impl Display for Operand {
 impl Display for Exception {
   fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
     match self {
-      Exception::Arith => write!(fmt, "SIGFPE"),
       Exception::Abort => write!(fmt, "ABORT"),
     }
   }
