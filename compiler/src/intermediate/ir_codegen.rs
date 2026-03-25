@@ -167,12 +167,11 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.switch_to_block(body_label);
       ctx.add_pred_to_block(header_end_label);
       ctx.seal_block(body_label); // only predecessor is header_end block
-      let body_terminated = munch_stmt(body_stmt, ctx);
 
       // if loop body is not guaranteed to terminate, we have back-edge to header
-      if !body_terminated {
-        ctx.set_block_terminator(Instr::JumpTo(header_label)); // add back-edge
+      if !munch_stmt(body_stmt, ctx) {
         let body_end_label = ctx.current_block_label;
+        ctx.set_block_terminator(Instr::JumpTo(header_label)); // add back-edge
         ctx.switch_to_block(header_label); // go back to header
         ctx.add_pred_to_block(body_end_label); // header has predecessor in loop body end
       }
@@ -230,6 +229,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
         {
           // if step doesn't terminate, we add a back-edge from step to header
           let step_end_label = ctx.current_block_label;
+          ctx.set_block_terminator(Instr::JumpTo(header_label));
           ctx.switch_to_block(header_label);
           ctx.add_pred_to_block(step_end_label);
         }
