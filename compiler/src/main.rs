@@ -4,6 +4,7 @@ mod emit;
 mod front;
 mod intermediate;
 mod llvm_back;
+mod x86_back;
 
 use std::{fs, process, thread, time};
 
