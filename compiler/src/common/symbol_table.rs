@@ -153,6 +153,7 @@ impl SymbolTable {
     }
   }
 
+  /// Get a function context by function name.
   pub fn get_function_context(&mut self, id: &Ident) -> &mut FunctionContext {
     self
       .function_context

@@ -56,9 +56,9 @@ pub enum Stmt {
   NoOp(),
 }
 
-#[derive(Clone)]
 /// Expression tree.
 /// For non-immediates, type is determined during semantic analysis. Parser should set type to `None`.
+#[derive(Clone)]
 pub enum Expr {
   /// Numeric immediate
   Number(i32),
@@ -104,8 +104,8 @@ pub enum UnOp {
   LNot,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
 /// Binary operators.
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum BinOp {
   /// Arithmetic add (+)
   Add,
@@ -145,8 +145,8 @@ pub enum BinOp {
   Gte,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
 /// Post-operators.
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PostOp {
   /// Post-increment (++)
   Inc,
@@ -166,8 +166,8 @@ impl PostOp {
   }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
 /// Assignment operators.
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AsnOp {
   /// =
   Equal,

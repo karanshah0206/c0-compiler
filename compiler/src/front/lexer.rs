@@ -2,6 +2,7 @@ use std::fmt::{Display, Formatter, Result};
 
 use logos::Logos;
 
+/// Helper method to skip (potentially nested) multi-line comments.
 fn skip_block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
   let mut depth = 1;
   let mut idx = 0;
@@ -34,6 +35,7 @@ fn skip_block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip 
   logos::Skip
 }
 
+/// Lexical tokens for the C0 language.
 #[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(skip r"[ \n\r\t\f\v]+")]
 pub enum Token<'a> {
