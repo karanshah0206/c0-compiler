@@ -1,7 +1,7 @@
 use std::fmt::{Display, Error, Formatter};
 
 /// X86-64 general-purpose registers.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum X86Reg {
   Rax,
   Rbx,
@@ -25,24 +25,24 @@ use X86Reg::*;
 impl X86Reg {
   /// Registers that can be allocated to temporaries.
   /// Position in array corresponds to color for register allocation.
-  pub fn allocatable() -> Vec<X86Reg> {
+  pub fn allocatable() -> Vec<Self> {
     vec![
       Rax, Rbx, Rcx, Rdx, Rdi, Rsi, R8, R9, R11, R12, R13, R14, R15, Rbp,
     ]
   }
 
   /// Non-volatile registers.
-  pub fn callee_saved() -> Vec<X86Reg> {
+  pub fn callee_saved() -> Vec<Self> {
     vec![Rbx, R12, R13, R14, R15, Rbp]
   }
 
   /// Volatile/call-clobbered registers.
-  pub fn caller_saved() -> Vec<X86Reg> {
+  pub fn caller_saved() -> Vec<Self> {
     vec![Rax, Rcx, Rdx, Rdi, Rsi, R8, R9, R10, R11]
   }
 
   /// Function argument registers in order.
-  pub fn call_argument() -> Vec<X86Reg> {
+  pub fn call_argument() -> Vec<Self> {
     vec![Rdi, Rsi, Rdx, Rcx, R8, R9]
   }
 }

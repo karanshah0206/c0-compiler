@@ -219,7 +219,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.add_pred_to_block(header_end_label);
       ctx.seal_block(body_label); // only predecessor is header_end block
       if !munch_stmt(body_stmt, ctx) {
-        // if loop body doesn't terminate, we add a back-edge from it to step block
+        // if loop body doesn't terminate, we add an edge from it to step block
         let body_end_label = ctx.current_block_label;
         ctx.set_block_terminator(Instr::JumpTo(step_label));
         ctx.switch_to_block(step_label);
@@ -389,7 +389,7 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
           name: func_id.to_string(),
           args,
         });
-        Operand::Const(0) // using this as a sentinel for a void return, semantic analyzer already confirms this value is never read
+        Operand::Const(0) // sentinel for void return, sema already confirms it is never read
       } else {
         let dest = ctx.create_temp(result_typ);
         ctx.add_instr_to_block(Instr::Call {

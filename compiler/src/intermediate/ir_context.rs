@@ -70,6 +70,11 @@ impl IRContext {
     }
   }
 
+  /// Get the number of temporaries generated within the context.
+  pub fn get_temps_count(&self) -> usize {
+    self.temp_counter
+  }
+
   /// Create an unsealed block and return its label.
   pub fn create_block(&mut self) -> Label {
     let label = Label(self.label_counter);
