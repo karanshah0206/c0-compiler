@@ -13,6 +13,7 @@ use logos::Logos;
 use crate::front::{lexer::Token, parser::parse, semantics};
 use crate::intermediate::ir_codegen;
 use crate::llvm_back::llvm::generate_llvm;
+use crate::x86_back::regalloc;
 
 fn main() {
   let config = args::parse_args();
@@ -114,7 +115,20 @@ fn main() {
         args::EmitTarget::Abstract => {
           emit::emit_ir(config.source.unwrap(), program_ir, symbol_table).is_err() as i32
         }
-        args::EmitTarget::X86_64 => todo!(),
+        args::EmitTarget::X86_64 => {
+          // 5. Register allocation
+          let (coloring, regalloc_time) = time!(regalloc::register_allocation(
+            &program_ir,
+            &symbol_table,
+            config.optimizer_level
+          ));
+
+          if config.verbose {
+            println!("Regalloc time: {}us", regalloc_time.as_micros());
+          }
+
+          todo!();
+        }
         args::EmitTarget::LLVM => {
           let (llvm_str, codegen_time) = time!(generate_llvm(
             &header_ast,
