@@ -92,14 +92,14 @@ fn generate_function(
             if target == rhs && target != lhs {
               if matches!(op, BinOp::Sub) {
                 // (a - b) == (-b + a)
-                ctx.emit_unary_operation(UnOp::Neg, rhs);
-                ctx.emit_binary_operation(BinOp::Add, lhs, rhs);
+                ctx.emit_unary_op(UnOp::Neg, rhs);
+                ctx.emit_binary_op(BinOp::Add, Some(lhs), Some(rhs));
               } else {
-                ctx.emit_binary_operation(op, lhs, rhs);
+                ctx.emit_binary_op(op, Some(lhs), Some(rhs));
               }
             } else {
               ctx.emit_move(lhs, target);
-              ctx.emit_binary_operation(op, lhs, target);
+              ctx.emit_binary_op(op, Some(lhs), Some(target));
             }
 
             ctx.emit_move(target, dest);
@@ -111,7 +111,7 @@ fn generate_function(
         let src = ctx.get_operand_location(src);
         let dest = ctx.get_temp_location(dest);
         ctx.emit_move(src, dest.clone());
-        ctx.emit_unary_operation(op, dest);
+        ctx.emit_unary_op(op, dest);
       }
       // Function-scoped label
       Instr::Label(label) => ctx.emit_label(label.0),

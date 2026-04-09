@@ -162,14 +162,50 @@ impl X86Context {
   }
 
   /// Emit a unary operation on the destination operand.
-  pub fn emit_unary_operation(&mut self, op: UnOp, dest: X86Operand) {
+  pub fn emit_unary_op(&mut self, op: UnOp, dest: X86Operand) {
     match op {
       UnOp::Neg => self.instructions.push(X86Instr::Neg(dest)),
       UnOp::Not | UnOp::LNot => self.instructions.push(X86Instr::Not(dest)),
     }
   }
 
-  pub fn emit_binary_operation(&mut self, op: BinOp, src: X86Operand, dest: X86Operand) {}
+  /// Emit a binary operation from source to destination operand.
+  /// Either of the operands may be implicit depending on the oepration.
+  pub fn emit_binary_op(&mut self, op: BinOp, src: Option<X86Operand>, dest: Option<X86Operand>) {
+    let op_instr = match op {
+      BinOp::Add => X86Instr::Add(src.unwrap(), dest.unwrap()),
+      BinOp::Sub => X86Instr::Sub(src.unwrap(), dest.unwrap()),
+      BinOp::Mul => match src.unwrap() {
+        X86Operand::Immediate(_) => {
+          X86Instr::IMul(Some(src.unwrap()), dest.unwrap(), dest.unwrap())
+        }
+        _ => X86Instr::IMul(None, src.unwrap(), dest.unwrap()),
+      },
+      BinOp::Div => {
+        let src = src.unwrap();
+        let src = if let X86Operand::Immediate(_) = src {
+          let scratch = X86Operand::Register(X86WReg::scratch(src.width()));
+          self.emit_move(src, scratch);
+          scratch
+        } else {
+          src
+        };
+        self.instructions.push(X86Instr::Cqo(src.width()));
+        X86Instr::IDiv(src)
+      }
+      BinOp::And | BinOp::LAnd => X86Instr::And(src.unwrap(), dest.unwrap()),
+      BinOp::Xor => X86Instr::Xor(src.unwrap(), dest.unwrap()),
+      BinOp::Or | BinOp::LOr => X86Instr::Or(src.unwrap(), dest.unwrap()),
+      BinOp::Sal => X86Instr::Sal(src, dest.unwrap()),
+      BinOp::Sar => X86Instr::Sar(src, dest.unwrap()),
+      BinOp::Mod => unreachable!("Resolve mod to div before calling x86 generation context."),
+      BinOp::CmpEq | BinOp::CmpNeq | BinOp::Gt | BinOp::Gte | BinOp::Lt | BinOp::Lte => {
+        unreachable!("Use emit_binary_comparator for binary comparators like {op}.")
+      }
+    };
+
+    self.instructions.push(op_instr);
+  }
 
   /// Emit instructions for a function call.
   pub fn emit_call(&mut self, dest: Option<X86Operand>, args: Vec<X86Operand>, name: String) {
