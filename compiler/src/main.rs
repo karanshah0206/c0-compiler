@@ -13,7 +13,7 @@ use logos::Logos;
 use crate::front::{lexer::Token, parser::parse, semantics};
 use crate::intermediate::ir_codegen;
 use crate::llvm_back::llvm::generate_llvm;
-use crate::x86_back::regalloc;
+use crate::x86_back::{regalloc, x86_codegen};
 
 fn main() {
   let config = args::parse_args();
@@ -80,14 +80,14 @@ fn main() {
 
       if config.verbose {
         println!(
-          "Lexing time: {}us",
+          "Lexing: {}us",
           header_lex_time.as_micros() + source_lex_time.as_micros()
         );
         println!(
-          "Parsing time: {}us",
+          "Parsing: {}us",
           header_parse_time.as_micros() + source_parse_time.as_micros()
         );
-        println!("Semantics time: {}us", sema_time.as_micros());
+        println!("Semantics: {}us", sema_time.as_micros());
       }
 
       if config.check {
@@ -108,7 +108,7 @@ fn main() {
       }
 
       if config.verbose {
-        println!("IR generation time: {}us", ir_gen_time.as_micros());
+        println!("IR Codegen: {}us", ir_gen_time.as_micros());
       }
 
       match config.target {
@@ -123,11 +123,18 @@ fn main() {
             config.optimizer_level
           ));
 
+          let (x86_program, x86_time) = time!(x86_codegen::generate_x86_assembly(
+            &program_ir,
+            &coloring,
+            &symbol_table
+          ));
+
           if config.verbose {
-            println!("Regalloc time: {}us", regalloc_time.as_micros());
+            println!("Register Allocation: {}us", regalloc_time.as_micros());
+            println!("x86 Codegen: {}us", x86_time.as_micros());
           }
 
-          todo!();
+          emit::emit_x86(config.source.unwrap(), x86_program).is_err() as i32
         }
         args::EmitTarget::LLVM => {
           let (llvm_str, codegen_time) = time!(generate_llvm(
@@ -138,7 +145,7 @@ fn main() {
           ));
 
           if config.verbose {
-            println!("LLVM codegen time: {}us", codegen_time.as_micros());
+            println!("LLVM Codegen: {}us", codegen_time.as_micros());
           }
 
           emit::emit_llvm(config.source.unwrap(), llvm_str).is_err() as i32

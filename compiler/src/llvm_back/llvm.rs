@@ -4,7 +4,7 @@ use crate::common::symbol_table::SymbolTable;
 use crate::front::ast::*;
 use crate::intermediate::{
   ir_asm::{Exception, Instr, Operand},
-  ir_context::IRContext,
+  ir_codegen::ProgramIR,
 };
 
 /// An LLVM Function Signature.
@@ -15,99 +15,11 @@ struct FunctionSignature {
   param_typs: Vec<Typ>,
 }
 
-/// Transform C0 type to LLVM type.
-fn llvm_type(typ: &Typ) -> &'static str {
-  match typ {
-    Typ::Void => "void",
-    Typ::Int => "i32",
-    Typ::Bool => "i1",
-    Typ::Typedef(_) => unreachable!("Unresolved typedefs found in LLVM backend."),
-  }
-}
-
-/// Stringify an operand of a given type.
-fn emit_operand_of_typ(op: &Operand, typ: &Typ) -> String {
-  match typ {
-    Typ::Bool => emit_i1(op),
-    Typ::Int => emit_i32(op),
-    Typ::Void => unreachable!("Typechecker erroneously allows operands to be of type void."),
-    Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
-  }
-}
-
-/// Stringify an immediate of a given type.
-fn emit_const_of_typ(value: i32, typ: &Typ) -> String {
-  match typ {
-    Typ::Bool => {
-      if value == 0 {
-        "false".to_string()
-      } else {
-        "true".to_string()
-      }
-    }
-    Typ::Int => value.to_string(),
-    Typ::Void => {
-      unreachable!("Typechecker erroneously permits constants assigned to the void type.")
-    }
-    Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
-  }
-}
-
-/// Stringify a boolean operand.
-fn emit_i1(op: &Operand) -> String {
-  match op {
-    Operand::Const(value) => {
-      if *value == 0 {
-        "false".to_string()
-      } else {
-        "true".to_string()
-      }
-    }
-    Operand::Temp((id, typ)) => match typ {
-      Typ::Bool => format!("%t{}", id),
-      _ => {
-        unreachable!("Typechecker erroneously allows non-bool expressions where unacceptable.")
-      }
-    },
-  }
-}
-
-/// Stringify an integer operand.
-fn emit_i32(op: &Operand) -> String {
-  match op {
-    Operand::Const(value) => value.to_string(),
-    Operand::Temp((id, typ)) => match typ {
-      Typ::Int => format!("%t{}", id),
-      _ => unreachable!("Typechecker erroneously allows non-int expressions where unacceptable."),
-    },
-  }
-}
-
-/// Stringify an operand as an i32 (cast booleans into i32, ints remain unchanged)
-fn cast_to_i32(op: &Operand, aux_counter: &mut usize) -> (String, String) {
-  match op {
-    Operand::Const(value) => (value.to_string(), String::new()),
-    Operand::Temp((id, typ)) => match typ {
-      Typ::Bool => {
-        let temp_casted = format!("%aux{}", *aux_counter);
-        *aux_counter += 1;
-        (
-          temp_casted.clone(),
-          format!("\t{temp_casted} = zext i1 %t{id} to i32\n"),
-        )
-      }
-      Typ::Int => (format!("%t{id}"), String::new()),
-      Typ::Void => unreachable!("Cannot cast from void to boolean."),
-      Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
-    },
-  }
-}
-
 /// Generate an emittable LLVM IR string.
 pub fn generate_llvm(
-  header_ast: &Program,
-  source_ast: &Program,
-  program_ir: &HashMap<Ident, IRContext>,
+  header_ast: &ProgramAST,
+  source_ast: &ProgramAST,
+  program_ir: &ProgramIR,
   symbol_table: &SymbolTable,
 ) -> String {
   let mut function_signatures: HashMap<Ident, FunctionSignature> = HashMap::new();
@@ -197,7 +109,7 @@ pub fn generate_llvm(
 
 /// Generate LLVM function signatures from functions in the source code.
 fn collect_function_signatures(
-  program: &Program,
+  program: &ProgramAST,
   function_signatures: &mut HashMap<Ident, FunctionSignature>,
 ) {
   for g_decl in program {
@@ -214,6 +126,16 @@ fn collect_function_signatures(
       }
       GlobalDeclaration::Typedef(..) => {}
     }
+  }
+}
+
+/// Transform C0 type to LLVM type.
+fn llvm_type(typ: &Typ) -> &'static str {
+  match typ {
+    Typ::Void => "void",
+    Typ::Int => "i32",
+    Typ::Bool => "i1",
+    Typ::Typedef(_) => unreachable!("Unresolved typedefs found in LLVM backend."),
   }
 }
 
@@ -377,5 +299,83 @@ fn generate_instr(
         }
       }
     }
+  }
+}
+
+/// Stringify an operand of a given type.
+fn emit_operand_of_typ(op: &Operand, typ: &Typ) -> String {
+  match typ {
+    Typ::Bool => emit_i1(op),
+    Typ::Int => emit_i32(op),
+    Typ::Void => unreachable!("Typechecker erroneously allows operands to be of type void."),
+    Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
+  }
+}
+
+/// Stringify an immediate of a given type.
+fn emit_const_of_typ(value: i32, typ: &Typ) -> String {
+  match typ {
+    Typ::Bool => {
+      if value == 0 {
+        "false".to_string()
+      } else {
+        "true".to_string()
+      }
+    }
+    Typ::Int => value.to_string(),
+    Typ::Void => {
+      unreachable!("Typechecker erroneously permits constants assigned to the void type.")
+    }
+    Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
+  }
+}
+
+/// Stringify a boolean operand.
+fn emit_i1(op: &Operand) -> String {
+  match op {
+    Operand::Const(value) => {
+      if *value == 0 {
+        "false".to_string()
+      } else {
+        "true".to_string()
+      }
+    }
+    Operand::Temp((id, typ)) => match typ {
+      Typ::Bool => format!("%t{}", id),
+      _ => {
+        unreachable!("Typechecker erroneously allows non-bool expressions where unacceptable.")
+      }
+    },
+  }
+}
+
+/// Stringify an integer operand.
+fn emit_i32(op: &Operand) -> String {
+  match op {
+    Operand::Const(value) => value.to_string(),
+    Operand::Temp((id, typ)) => match typ {
+      Typ::Int => format!("%t{}", id),
+      _ => unreachable!("Typechecker erroneously allows non-int expressions where unacceptable."),
+    },
+  }
+}
+
+/// Stringify an operand as an i32 (cast booleans into i32, ints remain unchanged)
+fn cast_to_i32(op: &Operand, aux_counter: &mut usize) -> (String, String) {
+  match op {
+    Operand::Const(value) => (value.to_string(), String::new()),
+    Operand::Temp((id, typ)) => match typ {
+      Typ::Bool => {
+        let temp_casted = format!("%aux{}", *aux_counter);
+        *aux_counter += 1;
+        (
+          temp_casted.clone(),
+          format!("\t{temp_casted} = zext i1 %t{id} to i32\n"),
+        )
+      }
+      Typ::Int => (format!("%t{id}"), String::new()),
+      Typ::Void => unreachable!("Cannot cast from void to boolean."),
+      Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
+    },
   }
 }

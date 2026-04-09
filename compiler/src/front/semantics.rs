@@ -4,7 +4,7 @@ use crate::common::symbol_table::SymbolTable;
 use crate::front::ast::*;
 
 /// Perform semantic analysis on the program.
-pub fn analyze_program(header_ast: &mut Program, source_ast: &mut Program) -> SymbolTable {
+pub fn analyze_program(header_ast: &mut ProgramAST, source_ast: &mut ProgramAST) -> SymbolTable {
   use GlobalDeclaration::*;
 
   let mut symbol_table = SymbolTable::new();

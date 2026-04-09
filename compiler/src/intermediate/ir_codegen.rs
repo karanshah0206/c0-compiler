@@ -7,17 +7,19 @@ use crate::intermediate::{
   ir_context::IRContext,
 };
 
+/// Program's IR is a collection of IRs for all defined source functions.
+pub type ProgramIR = HashMap<Ident, IRContext>;
+
 /// Perform a convenient munch on the ASTs of defined functions in the source program.
 /// Generate an SSA IR using Braun et al.'s technique.
-/// Returns separate IRs for each function in the program.
-pub fn munch_program(ast: &Program, symbol_table: &SymbolTable) -> HashMap<Ident, IRContext> {
+pub fn munch_program(ast: &ProgramAST, symbol_table: &SymbolTable) -> ProgramIR {
   ast
     .iter()
     .filter_map(|decl| {
       if let GlobalDeclaration::FDefn(ret_typ, name, params, body) = decl
         && symbol_table.is_defined(name)
       {
-        Some((name.clone(), munch_ast(ret_typ, params, body)))
+        Some((name.clone(), munch_function_body(ret_typ, params, body)))
       } else {
         None
       }
@@ -26,7 +28,7 @@ pub fn munch_program(ast: &Program, symbol_table: &SymbolTable) -> HashMap<Ident
 }
 
 /// Transform a function's AST into IR.
-fn munch_ast(typ: &Typ, params: &[Variable], body: &Stmt) -> IRContext {
+fn munch_function_body(typ: &Typ, params: &[Variable], body: &Stmt) -> IRContext {
   let mut ctx = IRContext::new();
 
   // parameters are treated as defined in the entry block.
@@ -36,7 +38,7 @@ fn munch_ast(typ: &Typ, params: &[Variable], body: &Stmt) -> IRContext {
     ctx.write_variable(param_id, temp, entry_label);
   }
 
-  if !munch_stmt(body, &mut ctx) && *typ == Typ::Void {
+  if !munch_statement(body, &mut ctx) && *typ == Typ::Void {
     // implicit void return
     ctx.set_block_terminator(Instr::Return(None));
   }
@@ -48,22 +50,22 @@ fn munch_ast(typ: &Typ, params: &[Variable], body: &Stmt) -> IRContext {
 
 /// Transform an AST statement into an IR instruction.
 /// Returns `true` if statement is terminal.
-fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
+fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
   match stmt {
     Stmt::Decl(_) | Stmt::NoOp() => false,
     Stmt::Defn((var_typ, var_id), expr) => {
-      let dest = get_operand_temp(munch_expr(expr, ctx), var_typ.clone(), ctx);
+      let dest = get_operand_temp(munch_expression(expr, ctx), var_typ.clone(), ctx);
       ctx.write_variable(var_id, dest, ctx.current_block_label);
       false
     }
     Stmt::Asgn(var_id, asn_op, expr) => {
       let assigned_temp = match asn_op {
-        AsnOp::Equal => get_operand_temp(munch_expr(expr, ctx), expr.get_type(), ctx),
+        AsnOp::Equal => get_operand_temp(munch_expression(expr, ctx), expr.get_type(), ctx),
         op => {
           let op = op.to_binop().unwrap(); // only equality doesn't have binop
 
           let operand_temp = ctx.read_variable(var_id, ctx.current_block_label);
-          let rhs = munch_expr(expr, ctx);
+          let rhs = munch_expression(expr, ctx);
           let dest = ctx.create_temp(operand_temp.1.clone());
 
           ctx.add_instr_to_block(Instr::BinOp {
@@ -103,7 +105,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
 
       // evaluate condition block (which is the current block)
       let condition_label = ctx.current_block_label;
-      let condition = munch_expr(expr, ctx);
+      let condition = munch_expression(expr, ctx);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: if_label,
@@ -114,7 +116,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.switch_to_block(if_label);
       ctx.add_pred_to_block(condition_label);
       ctx.seal_block(if_label); // only predecessor is predecessor
-      let if_terminated = munch_stmt(if_stmt, ctx);
+      let if_terminated = munch_statement(if_stmt, ctx);
       let if_end_label = ctx.current_block_label;
       if !if_terminated {
         ctx.set_block_terminator(Instr::JumpTo(merge_label));
@@ -124,7 +126,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.switch_to_block(else_label);
       ctx.add_pred_to_block(condition_label);
       ctx.seal_block(else_label); // only predecessor is predecessor
-      let else_terminated = munch_stmt(else_stmt, ctx);
+      let else_terminated = munch_statement(else_stmt, ctx);
       let else_end_label = ctx.current_block_label;
       if !else_terminated {
         ctx.set_block_terminator(Instr::JumpTo(merge_label));
@@ -157,7 +159,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.set_block_terminator(Instr::JumpTo(header_label));
       ctx.switch_to_block(header_label);
       ctx.add_pred_to_block(parent_label);
-      let condition = munch_expr(expr, ctx);
+      let condition = munch_expression(expr, ctx);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: body_label,
@@ -171,7 +173,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.seal_block(body_label); // only predecessor is header_end block
 
       // if loop body is not guaranteed to terminate, we have back-edge to header
-      if !munch_stmt(body_stmt, ctx) {
+      if !munch_statement(body_stmt, ctx) {
         let body_end_label = ctx.current_block_label;
         ctx.set_block_terminator(Instr::JumpTo(header_label)); // add back-edge
         ctx.switch_to_block(header_label); // go back to header
@@ -190,7 +192,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
     Stmt::For(init_stmt, expr, step_stmt, body_stmt) => {
       // evaluate loop initializer
       if let Some(init_stmt) = init_stmt.as_ref() {
-        if munch_stmt(init_stmt, ctx) {
+        if munch_statement(init_stmt, ctx) {
           // if loop initializer terminates, no need to evaluate the rest of the loop
           return true;
         }
@@ -206,7 +208,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.set_block_terminator(Instr::JumpTo(header_label));
       ctx.switch_to_block(header_label);
       ctx.add_pred_to_block(parent_label);
-      let condition = munch_expr(expr, ctx);
+      let condition = munch_expression(expr, ctx);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: body_label,
@@ -218,7 +220,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.switch_to_block(body_label);
       ctx.add_pred_to_block(header_end_label);
       ctx.seal_block(body_label); // only predecessor is header_end block
-      if !munch_stmt(body_stmt, ctx) {
+      if !munch_statement(body_stmt, ctx) {
         // if loop body doesn't terminate, we add an edge from it to step block
         let body_end_label = ctx.current_block_label;
         ctx.set_block_terminator(Instr::JumpTo(step_label));
@@ -227,7 +229,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
         ctx.seal_block(step_label); // only predecessor is body_end block
 
         let step_terminates = if let Some(step_stmt) = step_stmt.as_ref() {
-          munch_stmt(step_stmt, ctx)
+          munch_statement(step_stmt, ctx)
         } else {
           false
         };
@@ -253,7 +255,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
     Stmt::Block(stmts) => {
       let mut terminates = false;
       for stmt in stmts {
-        terminates = munch_stmt(stmt, ctx);
+        terminates = munch_statement(stmt, ctx);
         if terminates {
           break;
         }
@@ -261,12 +263,12 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       terminates
     }
     Stmt::Ret(expr) => {
-      let return_operand = expr.as_ref().map(|expr| munch_expr(expr, ctx));
+      let return_operand = expr.as_ref().map(|expr| munch_expression(expr, ctx));
       ctx.set_block_terminator(Instr::Return(return_operand));
       true
     }
     Stmt::Expr(expr) => {
-      munch_expr(expr, ctx);
+      munch_expression(expr, ctx);
       false
     }
     Stmt::Assert(expr) => {
@@ -275,7 +277,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
 
       // evaluate condition
       let parent_label = ctx.current_block_label;
-      let condition = munch_expr(expr, ctx);
+      let condition = munch_expression(expr, ctx);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: pass_label,
@@ -299,7 +301,7 @@ fn munch_stmt(stmt: &Stmt, ctx: &mut IRContext) -> bool {
 }
 
 /// Transform expressions in AST to IR instructions
-fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
+fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
   match expr {
     Expr::Number(number) => Operand::Const(*number),
     Expr::Bool(boolean) => Operand::Const(if *boolean { 1 } else { 0 }),
@@ -307,8 +309,8 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
     Expr::Binop(lhs, bin_op, rhs, typ) => match bin_op {
       BinOp::LAnd | BinOp::LOr => short_circuit_binop(bin_op, lhs, rhs, typ, expr, ctx),
       _ => {
-        let lhs = munch_expr(lhs, ctx);
-        let rhs = munch_expr(rhs, ctx);
+        let lhs = munch_expression(lhs, ctx);
+        let rhs = munch_expression(rhs, ctx);
 
         let dest = ctx.create_temp(typ.clone().unwrap_or_else(|| expr.get_type()));
 
@@ -323,7 +325,7 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
       }
     },
     Expr::Unop(un_op, expr, typ) => {
-      let src = munch_expr(expr, ctx);
+      let src = munch_expression(expr, ctx);
       let dest = ctx.create_temp(typ.clone().unwrap_or_else(|| expr.get_type()));
       ctx.add_instr_to_block(Instr::UnOp {
         op: *un_op,
@@ -339,7 +341,7 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
 
       // evaluate condition expression
       let parent_label = ctx.current_block_label;
-      let condition = munch_expr(condition_expr, ctx);
+      let condition = munch_expression(condition_expr, ctx);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: if_label,
@@ -350,7 +352,7 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
       ctx.switch_to_block(if_label);
       ctx.add_pred_to_block(parent_label);
       ctx.seal_block(if_label); // only one predecessor in parent
-      let if_operand = munch_expr(if_expr, ctx);
+      let if_operand = munch_expression(if_expr, ctx);
       let if_end_label = ctx.current_block_label;
       ctx.set_block_terminator(Instr::JumpTo(merge_label));
 
@@ -358,7 +360,7 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
       ctx.switch_to_block(else_label);
       ctx.add_pred_to_block(parent_label);
       ctx.seal_block(else_label); // only one predecessor in parent
-      let else_operand = munch_expr(else_expr, ctx);
+      let else_operand = munch_expression(else_expr, ctx);
       let else_end_label = ctx.current_block_label;
       ctx.set_block_terminator(Instr::JumpTo(merge_label));
 
@@ -378,7 +380,7 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
     Expr::Call(func_id, args, typ) => {
       let args = args
         .iter()
-        .map(|arg| munch_expr(arg, ctx))
+        .map(|arg| munch_expression(arg, ctx))
         .collect::<Vec<_>>();
 
       let result_typ = typ.clone().unwrap_or_else(|| expr.get_type());
@@ -404,9 +406,8 @@ fn munch_expr(expr: &Expr, ctx: &mut IRContext) -> Operand {
 }
 
 /// Transform binary logical operators into short-circuit evaluation instructions.
-/// For logical AND, we short-circuit early (to `false`) if LHS is `false`.
-/// For logical OR, we short-circuit early (to `true`) if LHS is `true`.
-/// RHS is evaluated only if LHS is `true` with AND or LHS is `false` with OR.
+/// For logical AND, we short-circuit early to `false` if LHS is `false`.
+/// For logical OR, we short-circuit early to `true` if LHS is `true`.
 fn short_circuit_binop(
   bin_op: &BinOp,
   lhs: &Expr,
@@ -420,7 +421,7 @@ fn short_circuit_binop(
   let merge_label = ctx.create_block();
 
   let parent_label = ctx.current_block_label;
-  let lhs = munch_expr(lhs, ctx); // both 
+  let lhs = munch_expression(lhs, ctx); // both 
 
   match bin_op {
     BinOp::LAnd => ctx.set_block_terminator(Instr::JumpIf {
@@ -440,7 +441,7 @@ fn short_circuit_binop(
   ctx.switch_to_block(rhs_label);
   ctx.add_pred_to_block(parent_label);
   ctx.seal_block(rhs_label); // only predecessor is short-circuit parent
-  let rhs_operand = munch_expr(rhs, ctx);
+  let rhs_operand = munch_expression(rhs, ctx);
   let rhs_end_label = ctx.current_block_label;
   ctx.set_block_terminator(Instr::JumpTo(merge_label));
 

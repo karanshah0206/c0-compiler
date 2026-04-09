@@ -1,7 +1,7 @@
 use std::fmt::{Display, Error, Formatter};
 
-/// Program is a list of global declarations.
-pub type Program = Vec<GlobalDeclaration>;
+/// Top-level AST is a list of global declarations.
+pub type ProgramAST = Vec<GlobalDeclaration>;
 
 /// An identifier is a string.
 pub type Ident = String;
@@ -9,7 +9,7 @@ pub type Ident = String;
 /// A variable is a (type, identifier) tuple.
 pub type Variable = (Typ, Ident);
 
-/// Primitive types supported by the language (and typedefs).
+/// Primitive types and typedefs.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Typ {
   Void,

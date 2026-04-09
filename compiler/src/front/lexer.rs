@@ -2,39 +2,6 @@ use std::fmt::{Display, Formatter, Result};
 
 use logos::Logos;
 
-/// Helper method to skip (potentially nested) multi-line comments.
-fn skip_block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
-  let mut depth = 1;
-  let mut idx = 0;
-  let remainder = lex.remainder();
-  let bytes = remainder.as_bytes();
-
-  while idx + 1 < bytes.len() {
-    if bytes[idx] == b'/' && bytes[idx + 1] == b'*' {
-      depth += 1;
-      idx += 2;
-      continue;
-    }
-
-    if bytes[idx] == b'*' && bytes[idx + 1] == b'/' {
-      depth -= 1;
-      idx += 2;
-      if depth == 0 {
-        lex.bump(idx);
-        return logos::Skip;
-      }
-      continue;
-    }
-
-    idx += 1;
-  }
-
-  assert!(depth == 0, "Unclosed block comments.");
-
-  lex.bump(bytes.len());
-  logos::Skip
-}
-
 /// Lexical tokens for the C0 language.
 #[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(skip r"[ \n\r\t\f\v]+")]
@@ -197,4 +164,37 @@ impl Display for Token<'_> {
   fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
     write!(fmt, "{:#?}", self)
   }
+}
+
+/// Helper method to skip (potentially nested) multi-line comments.
+fn skip_block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
+  let mut depth = 1;
+  let mut idx = 0;
+  let remainder = lex.remainder();
+  let bytes = remainder.as_bytes();
+
+  while idx + 1 < bytes.len() {
+    if bytes[idx] == b'/' && bytes[idx + 1] == b'*' {
+      depth += 1;
+      idx += 2;
+      continue;
+    }
+
+    if bytes[idx] == b'*' && bytes[idx + 1] == b'/' {
+      depth -= 1;
+      idx += 2;
+      if depth == 0 {
+        lex.bump(idx);
+        return logos::Skip;
+      }
+      continue;
+    }
+
+    idx += 1;
+  }
+
+  assert!(depth == 0, "Unclosed block comments.");
+
+  lex.bump(bytes.len());
+  logos::Skip
 }
