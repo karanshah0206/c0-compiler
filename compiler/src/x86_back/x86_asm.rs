@@ -48,7 +48,7 @@ impl X86Reg {
 }
 
 /// Supported bit-widths for x86-64 operands.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Width {
   /// 8-bit operand
   W8,
@@ -62,7 +62,7 @@ pub enum Width {
 use Width::*;
 
 /// x86-64 general-purpose registers with width.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct X86WReg {
   /// General-purpose register to use as operand.
   pub register: X86Reg,
@@ -121,7 +121,7 @@ impl X86WReg {
 }
 
 /// Immediate/numeric literal operand.
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Immediate {
   /// Concrete value of the operand.
   pub value: i64,
@@ -130,7 +130,7 @@ pub struct Immediate {
 }
 
 /// Temporary stored on stack.
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct StackVar {
   /// Offset from stack pointer.
   pub offset: usize,
@@ -139,7 +139,7 @@ pub struct StackVar {
 }
 
 /// Operand to x86-64 instructions.
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum X86Operand {
   /// Operand stored on a register.
   Register(X86WReg),

@@ -123,10 +123,11 @@ fn main() {
             config.optimizer_level
           ));
 
-          let (x86_program, x86_time) = time!(x86_codegen::generate_x86_assembly(
+          let (x86_program, x86_time) = time!(x86_codegen::generate_assembly(
             &program_ir,
-            &coloring,
-            &symbol_table
+            coloring,
+            &symbol_table,
+            config.allow_unsafe
           ));
 
           if config.verbose {
