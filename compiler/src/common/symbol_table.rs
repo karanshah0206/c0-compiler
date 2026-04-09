@@ -153,8 +153,16 @@ impl SymbolTable {
     }
   }
 
-  /// Get a function context by function name.
-  pub fn get_function_context(&mut self, id: &Ident) -> &mut FunctionContext {
+  /// Get function context by function name.
+  pub fn get_function_context(&self, id: &Ident) -> &FunctionContext {
+    self
+      .function_context
+      .get(id)
+      .expect(&format!("Unknown function {id}."))
+  }
+
+  /// Get a mutable function context by function name.
+  pub fn get_mut_function_context(&mut self, id: &Ident) -> &mut FunctionContext {
     self
       .function_context
       .get_mut(id)
@@ -169,6 +177,11 @@ impl SymbolTable {
   /// Check whether an identifier belongs to a declared function.
   pub fn is_function(&self, id: &Ident) -> bool {
     self.function_context.contains_key(id)
+  }
+
+  /// Check whether an identifier belongs to a function declared in the header file.
+  pub fn is_header_function(&self, id: &Ident) -> bool {
+    self.header_functions.contains(id)
   }
 
   /// Check whether a function has been defined.

@@ -61,7 +61,7 @@ pub enum Stmt {
 #[derive(Clone)]
 pub enum Expr {
   /// Numeric immediate
-  Number(i32),
+  Number(i64),
   /// Boolean immediate
   Bool(bool),
   /// Variable identifier

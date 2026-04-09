@@ -86,7 +86,7 @@ fn analyze_function(id: &Ident, ast: &mut Stmt, typ: &Typ, st: &mut SymbolTable)
     analyze_stmt(id, ast, st).returns || typ == &Typ::Void,
     "{id} must always return {typ}."
   );
-  st.get_function_context(id).get_function_calls()
+  st.get_mut_function_context(id).get_function_calls()
 }
 
 /// Perform semantic analysis on a statement.
@@ -103,7 +103,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       var.0 = st.resolve_type(var.0.clone());
 
-      st.get_function_context(id).declare_var(var.clone());
+      st.get_mut_function_context(id).declare_var(var.clone());
 
       TcResult::ok()
     }
@@ -119,7 +119,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       analyze_expr(id, expr, st);
 
       var.0 = st.resolve_type(var.0.clone());
-      st.get_function_context(id).declare_var(var.clone());
+      st.get_mut_function_context(id).declare_var(var.clone());
 
       assert!(
         var.0 == expr.get_type(),
@@ -127,7 +127,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         var.1
       );
 
-      st.get_function_context(id).define_var(var.clone());
+      st.get_mut_function_context(id).define_var(var.clone());
 
       TcResult::ok_def(HashSet::from_iter(vec![var.1.to_string()]))
     }
@@ -135,11 +135,11 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       // assignment to declared variable
 
       assert!(
-        st.get_function_context(id).is_var_declared(var_id),
+        st.get_mut_function_context(id).is_var_declared(var_id),
         "Variable {var_id} not declared in this scope."
       );
 
-      let var_typ = st.get_function_context(id).get_var_type(var_id);
+      let var_typ = st.get_mut_function_context(id).get_var_type(var_id);
 
       analyze_expr(id, expr, st);
       assert!(
@@ -163,7 +163,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         );
       }
 
-      st.get_function_context(id)
+      st.get_mut_function_context(id)
         .define_var((var_typ, var_id.to_string()));
 
       TcResult::ok_def(HashSet::from_iter(vec![var_id.to_string()]))
@@ -172,22 +172,22 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       // post-operation (++/--) statement
 
       assert!(
-        st.get_function_context(id).is_var_declared(var_id),
+        st.get_mut_function_context(id).is_var_declared(var_id),
         "Variable {var_id} not declared in this scope."
       );
 
-      let var_typ = st.get_function_context(id).get_var_type(var_id);
+      let var_typ = st.get_mut_function_context(id).get_var_type(var_id);
       assert!(
         var_typ == Typ::Int,
         "Post-operations can only be performed on int, but {var_id} is of type {var_typ}."
       );
 
       assert!(
-        st.get_function_context(id).is_var_defined(var_id),
+        st.get_mut_function_context(id).is_var_defined(var_id),
         "Cannot perform post-op on undefined variable {var_id}."
       );
 
-      st.get_function_context(id)
+      st.get_mut_function_context(id)
         .define_var((var_typ, var_id.to_string()));
 
       TcResult::ok_def(HashSet::from_iter(vec![var_id.to_string()]))
@@ -201,17 +201,17 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         "Condition expression must evaluate to bool."
       );
 
-      st.get_function_context(id).scope_context.enter_scope();
+      st.get_mut_function_context(id).scope_context.enter_scope();
       let if_res = analyze_stmt(id, if_stmt, st);
-      st.get_function_context(id).scope_context.exit_scope();
+      st.get_mut_function_context(id).scope_context.exit_scope();
 
-      st.get_function_context(id).scope_context.enter_scope();
+      st.get_mut_function_context(id).scope_context.enter_scope();
       let else_res = analyze_stmt(id, else_stmt, st);
-      st.get_function_context(id).scope_context.exit_scope();
+      st.get_mut_function_context(id).scope_context.exit_scope();
 
       // outer variables that are defined in both branches become defined in outer scope.
       // if both branches return, the statement returns.
-      let function_ctx = st.get_function_context(id);
+      let function_ctx = st.get_mut_function_context(id);
 
       let mut res = TcResult::ok_def(
         if_res
@@ -248,9 +248,9 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         "While loop condition must evaluate to bool."
       );
 
-      st.get_function_context(id).scope_context.enter_scope();
+      st.get_mut_function_context(id).scope_context.enter_scope();
       analyze_stmt(id, body_stmt, st);
-      st.get_function_context(id).scope_context.exit_scope();
+      st.get_mut_function_context(id).scope_context.exit_scope();
 
       TcResult::ok()
     }
@@ -259,7 +259,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       let mut res = TcResult::ok();
 
-      st.get_function_context(id).scope_context.enter_scope();
+      st.get_mut_function_context(id).scope_context.enter_scope();
 
       if let Some(init_stmt) = init_stmt.as_mut() {
         res = analyze_stmt(id, init_stmt, st);
@@ -271,13 +271,13 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         "For loop condition must evaluate to bool."
       );
 
-      st.get_function_context(id).scope_context.enter_scope();
+      st.get_mut_function_context(id).scope_context.enter_scope();
       let body_res = analyze_stmt(id, body_stmt, st);
-      st.get_function_context(id).scope_context.exit_scope();
+      st.get_mut_function_context(id).scope_context.exit_scope();
 
       // Step executes after the body, but still lives in the for-loop scope.
       // So, we promote outer variables defined in body to the for-loop scope.
-      let function_ctx = st.get_function_context(id);
+      let function_ctx = st.get_mut_function_context(id);
       let defined_in_body = body_res
         .defines
         .iter()
@@ -293,10 +293,10 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         analyze_stmt(id, step_stmt, st);
       }
 
-      st.get_function_context(id).scope_context.exit_scope();
+      st.get_mut_function_context(id).scope_context.exit_scope();
 
       // if an outer variable is defined in initializer, it is defined in parent scope
-      let function_ctx = st.get_function_context(id);
+      let function_ctx = st.get_mut_function_context(id);
 
       res
         .defines
@@ -318,7 +318,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         return block_res;
       }
 
-      st.get_function_context(id).scope_context.enter_scope();
+      st.get_mut_function_context(id).scope_context.enter_scope();
 
       for stmt in stmts {
         let res = analyze_stmt(id, stmt, st);
@@ -328,16 +328,16 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
           block_res.returns = true;
           block_res
             .defines
-            .extend(st.get_function_context(id).define_all_vars());
+            .extend(st.get_mut_function_context(id).define_all_vars());
         } else if res.returns {
           block_res.returns = true;
         }
       }
 
-      st.get_function_context(id).scope_context.exit_scope();
+      st.get_mut_function_context(id).scope_context.exit_scope();
 
       // outer variables defined in inner scopes become defined on the block's scope.
-      let function_ctx = st.get_function_context(id);
+      let function_ctx = st.get_mut_function_context(id);
 
       let defined_vars = block_res
         .defines
@@ -383,7 +383,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         }
       }
 
-      TcResult::ok_ret(st.get_function_context(id).define_all_vars())
+      TcResult::ok_ret(st.get_mut_function_context(id).define_all_vars())
     }
     Stmt::Assert(expr) => {
       // assertion
@@ -412,7 +412,7 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
     Variable(var_id, typ) => {
       // variable in the source code
 
-      let function_ctx = st.get_function_context(id);
+      let function_ctx = st.get_mut_function_context(id);
       *typ = Some(function_ctx.get_var_type(var_id));
       assert!(
         function_ctx.is_var_defined(var_id),
@@ -525,7 +525,7 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
         .expect(&format!("Call to unknown function {func_id}"));
 
       assert!(
-        !st.get_function_context(id).is_var_declared(func_id),
+        !st.get_mut_function_context(id).is_var_declared(func_id),
         "Cannot call function {func_id} as it is shadowed by an identical identifier."
       );
 
@@ -539,7 +539,7 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
         assert!(arg.get_type() == params[i]);
       }
 
-      st.get_function_context(id)
+      st.get_mut_function_context(id)
         .insert_function_call(func_id.to_string());
 
       *typ = Some(ret_typ);

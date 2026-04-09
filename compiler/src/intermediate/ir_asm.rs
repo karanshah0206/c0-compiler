@@ -8,8 +8,8 @@ pub type Temp = (usize, Typ);
 /// Operand to an operator.
 #[derive(Clone)]
 pub enum Operand {
-  /// Immediate
-  Const(i32),
+  /// Typed immediate
+  Const((i64, Typ)),
   /// Temporary
   Temp(Temp),
 }
@@ -71,7 +71,16 @@ pub enum Instr {
 impl Display for Operand {
   fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
     match self {
-      Operand::Const(imm) => write!(fmt, "${imm}"),
+      Operand::Const(imm) => match imm.1 {
+        Typ::Bool => {
+          if imm.0 == 0 {
+            write!(fmt, "$false")
+          } else {
+            write!(fmt, "$true")
+          }
+        }
+        _ => write!(fmt, "${}", imm.0),
+      },
       Operand::Temp((id, _)) => write!(fmt, "T{id}"),
     }
   }

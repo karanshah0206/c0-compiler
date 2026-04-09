@@ -91,7 +91,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
         op: post_op.to_binop(),
         dest: dest.clone(),
         lhs: Operand::Temp(operand_temp.clone()),
-        rhs: Operand::Const(1), // currently post-ops are only inc/dec
+        rhs: Operand::Const((1, Typ::Int)), // currently post-ops are only inc/dec
       });
 
       ctx.write_variable(var_id, dest, ctx.current_block_label);
@@ -303,8 +303,8 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
 /// Transform expressions in AST to IR instructions
 fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
   match expr {
-    Expr::Number(number) => Operand::Const(*number),
-    Expr::Bool(boolean) => Operand::Const(if *boolean { 1 } else { 0 }),
+    Expr::Number(number) => Operand::Const((*number, Typ::Int)),
+    Expr::Bool(boolean) => Operand::Const((if *boolean { 1 } else { 0 }, Typ::Bool)),
     Expr::Variable(var_id, _) => Operand::Temp(ctx.read_variable(var_id, ctx.current_block_label)),
     Expr::Binop(lhs, bin_op, rhs, typ) => match bin_op {
       BinOp::LAnd | BinOp::LOr => short_circuit_binop(bin_op, lhs, rhs, typ, expr, ctx),
@@ -391,7 +391,7 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
           name: func_id.to_string(),
           args,
         });
-        Operand::Const(0) // sentinel for void return, sema already confirms it is never read
+        Operand::Const((0, Typ::Bool)) // sentinel for void return, sema already confirms it is never read
       } else {
         let dest = ctx.create_temp(result_typ);
         ctx.add_instr_to_block(Instr::Call {
@@ -450,8 +450,8 @@ fn short_circuit_binop(
   ctx.add_pred_to_block(parent_label);
   ctx.seal_block(short_circuit_label); // only predecessor is short-circuit parent
   let short_circuit_operand = match bin_op {
-    BinOp::LAnd => Operand::Const(0),
-    BinOp::LOr => Operand::Const(1),
+    BinOp::LAnd => Operand::Const((0, Typ::Bool)),
+    BinOp::LOr => Operand::Const((1, Typ::Bool)),
     _ => unreachable!("Cannot short-circuit evaluation of non-logical binop in IR codegen."),
   };
   let short_circuit_end_label = ctx.current_block_label;

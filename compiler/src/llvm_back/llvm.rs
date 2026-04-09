@@ -278,7 +278,7 @@ fn generate_instr(
         .iter()
         .map(|(label, op)| {
           let value = match op {
-            Operand::Const(value) => emit_const_of_typ(*value, &dest.1),
+            Operand::Const((value, _)) => emit_const_of_typ(*value, &dest.1),
             Operand::Temp((id, _)) => format!("%t{}", id),
           };
           format!("[ {}, %L{} ]", value, label.0)
@@ -313,7 +313,7 @@ fn emit_operand_of_typ(op: &Operand, typ: &Typ) -> String {
 }
 
 /// Stringify an immediate of a given type.
-fn emit_const_of_typ(value: i32, typ: &Typ) -> String {
+fn emit_const_of_typ(value: i64, typ: &Typ) -> String {
   match typ {
     Typ::Bool => {
       if value == 0 {
@@ -333,7 +333,7 @@ fn emit_const_of_typ(value: i32, typ: &Typ) -> String {
 /// Stringify a boolean operand.
 fn emit_i1(op: &Operand) -> String {
   match op {
-    Operand::Const(value) => {
+    Operand::Const((value, _)) => {
       if *value == 0 {
         "false".to_string()
       } else {
@@ -352,7 +352,7 @@ fn emit_i1(op: &Operand) -> String {
 /// Stringify an integer operand.
 fn emit_i32(op: &Operand) -> String {
   match op {
-    Operand::Const(value) => value.to_string(),
+    Operand::Const((value, _)) => value.to_string(),
     Operand::Temp((id, typ)) => match typ {
       Typ::Int => format!("%t{}", id),
       _ => unreachable!("Typechecker erroneously allows non-int expressions where unacceptable."),
@@ -363,7 +363,7 @@ fn emit_i32(op: &Operand) -> String {
 /// Stringify an operand as an i32 (cast booleans into i32, ints remain unchanged)
 fn cast_to_i32(op: &Operand, aux_counter: &mut usize) -> (String, String) {
   match op {
-    Operand::Const(value) => (value.to_string(), String::new()),
+    Operand::Const((value, _)) => (value.to_string(), String::new()),
     Operand::Temp((id, typ)) => match typ {
       Typ::Bool => {
         let temp_casted = format!("%aux{}", *aux_counter);

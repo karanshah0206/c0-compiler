@@ -73,7 +73,7 @@ extern {
 }
 
 /// The program is a collection of global declarations
-pub Program : Program = {
+pub Program : ProgramAST = {
   <g : GDecl*> => g,
 };
 
@@ -313,8 +313,8 @@ Mul: Expr = {
 // Expression over a unary
 Unary: Expr = {
   <o:UnOp> <e:Unary> => match (o,&e) {
-    (UnOp::Neg, Expr::Number(a)) => Expr::Number((-1 * (*a as i64)) as i32),
-    (UnOp::Not, Expr::Number(a)) => Expr::Number((!(*a as i64)) as i32),
+    (UnOp::Neg, Expr::Number(a)) => Expr::Number(-1 * (*a)),
+    (UnOp::Not, Expr::Number(a)) => Expr::Number(!(*a)),
     (UnOp::LNot, Expr::Bool(a)) => Expr::Bool(!a),
     _ => Expr::Unop(o, Box::new(e), None),
   },
@@ -324,7 +324,7 @@ Unary: Expr = {
 // Leaves in an expression
 Primary : Expr = {
   "(" <Expr> ")" => <>,
-  <n:Number> => Expr::Number(n as i32),
+  <n:Number> => Expr::Number(n),
   <b:Boolean> => Expr::Bool(b),
   <v:Ident> => Expr::Variable(v, None),
   <c:Call> => c,
