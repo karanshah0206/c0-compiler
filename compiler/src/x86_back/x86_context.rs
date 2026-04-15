@@ -161,6 +161,57 @@ impl X86Context {
     self.emit_jump(fails_label_id);
   }
 
+  /// Push an operand onto the stack. May clobber the scratch register if `src` is on memory.
+  pub fn emit_push(&mut self, src: X86Operand) {
+    let src = if src.width() == W64 {
+      src
+    } else {
+      match src {
+        X86Operand::Register(wreg) => X86Operand::Register(X86WReg {
+          register: wreg.register,
+          width: W64,
+        }),
+        X86Operand::Stack(stack_var) => {
+          self.emit_move(src, X86Operand::Register(X86WReg::scratch(src.width())));
+          X86Operand::Register(X86WReg::scratch(W64))
+        }
+        X86Operand::Immediate(imm) => X86Operand::Immediate(Immediate {
+          value: imm.value,
+          width: W64,
+        }),
+      }
+    };
+    self.instructions.push(X86Instr::Push(src));
+  }
+
+  /// Pop an operand from the stack. May clobber the scratch register if `dest` is on memory.
+  pub fn emit_pop(&mut self, dest: X86Operand) {
+    match dest {
+      X86Operand::Register(wreg) => {
+        self
+          .instructions
+          .push(X86Instr::Pop(X86Operand::Register(X86WReg {
+            register: wreg.register,
+            width: W64,
+          })));
+      }
+      X86Operand::Stack(stack_var) => {
+        if stack_var.width == W64 {
+          self.instructions.push(X86Instr::Pop(dest));
+        } else {
+          self
+            .instructions
+            .push(X86Instr::Pop(X86Operand::Register(X86WReg::scratch(W64))));
+          self.emit_move(
+            X86Operand::Register(X86WReg::scratch(stack_var.width)),
+            dest,
+          );
+        }
+      }
+      X86Operand::Immediate(_) => unreachable!("Illegal pop instruction to an immediate."),
+    };
+  }
+
   /// Emit a unary operation on the destination operand.
   pub fn emit_unary_op(&mut self, op: UnOp, dest: X86Operand) {
     match op {
@@ -181,7 +232,7 @@ impl X86Context {
         }
         _ => X86Instr::IMul(None, src.unwrap(), dest.unwrap()),
       },
-      BinOp::Div => {
+      BinOp::Div | BinOp::Mod => {
         let src = src.unwrap();
         let src = if let X86Operand::Immediate(_) = src {
           let scratch = X86Operand::Register(X86WReg::scratch(src.width()));
@@ -198,7 +249,6 @@ impl X86Context {
       BinOp::Or | BinOp::LOr => X86Instr::Or(src.unwrap(), dest.unwrap()),
       BinOp::Sal => X86Instr::Sal(src, dest.unwrap()),
       BinOp::Sar => X86Instr::Sar(src, dest.unwrap()),
-      BinOp::Mod => unreachable!("Resolve mod to div before calling x86 generation context."),
       BinOp::CmpEq | BinOp::CmpNeq | BinOp::Gt | BinOp::Gte | BinOp::Lt | BinOp::Lte => {
         unreachable!("Use emit_binary_comparator for binary comparators like {op}.")
       }

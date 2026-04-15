@@ -6,10 +6,9 @@ use crate::intermediate::{
   ir_asm::{Exception, Instr},
   ir_codegen::ProgramIR,
 };
-use crate::x86_back::x86_asm::X86WReg;
 use crate::x86_back::{
   regalloc::Regalloc,
-  x86_asm::{X86Instr, X86Operand},
+  x86_asm::{Width::*, X86Instr, X86Operand, X86WReg},
   x86_context::{Trap, X86Context},
 };
 
@@ -70,7 +69,49 @@ fn generate_function(
         let rhs = ctx.get_operand_location(rhs);
 
         match op {
-          BinOp::Div | BinOp::Mod => todo!(),
+          BinOp::Div | BinOp::Mod => {
+            let (save_quot_reg, save_mod_reg) = match dest {
+              X86Operand::Register(wreg) if wreg == X86WReg::quotient(dest.width()) => {
+                (true, false)
+              }
+              X86Operand::Register(wreg) if wreg == X86WReg::modulo(dest.width()) => (false, true),
+              _ => (false, false),
+            };
+
+            if save_quot_reg {
+              ctx.emit_push(X86Operand::Register(X86WReg::quotient(W64)));
+            }
+            if save_mod_reg {
+              ctx.emit_push(X86Operand::Register(X86WReg::modulo(W64)));
+            }
+
+            let rhs = if matches!(rhs, X86Operand::Register(_))
+              && (rhs == X86Operand::Register(X86WReg::quotient(rhs.width()))
+                || rhs == X86Operand::Register(X86WReg::modulo(rhs.width())))
+            {
+              let scratch = X86Operand::Register(X86WReg::scratch(rhs.width()));
+              ctx.emit_move(rhs, scratch);
+              scratch
+            } else {
+              rhs
+            };
+
+            ctx.emit_move(X86Operand::Register(X86WReg::quotient(dest.width())), lhs);
+            ctx.emit_binary_op(op, Some(rhs), None);
+
+            if matches!(op, BinOp::Div) {
+              ctx.emit_move(X86Operand::Register(X86WReg::quotient(dest.width())), dest);
+            } else {
+              ctx.emit_move(X86Operand::Register(X86WReg::modulo(dest.width())), dest);
+            }
+
+            if save_quot_reg {
+              ctx.emit_pop(X86Operand::Register(X86WReg::quotient(W64)));
+            }
+            if save_mod_reg {
+              ctx.emit_pop(X86Operand::Register(X86WReg::modulo(W64)));
+            }
+          }
           BinOp::Sal | BinOp::Sar => todo!(),
           BinOp::CmpEq | BinOp::CmpNeq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => todo!(),
           BinOp::Add
