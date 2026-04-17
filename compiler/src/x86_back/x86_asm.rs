@@ -214,6 +214,10 @@ pub enum X86Instr {
   Jmp(String),
   /// jne label
   Jne(String),
+  /// jl label
+  Jl(String),
+  // jg label
+  Jg(String),
   /// call `function_name`
   Call(String),
   /// ret
@@ -367,6 +371,8 @@ impl Display for X86Instr {
       Pop(d) => write!(fmt, "\tpop{}\t{d}", suf(d.width())),
       Jmp(label) => write!(fmt, "\tjmp\t{label}"),
       Jne(label) => write!(fmt, "\tjne\t{label}"),
+      Jl(label) => write!(fmt, "\tjl\t{label}"),
+      Jg(label) => write!(fmt, "\tjg\t{label}"),
       Call(name) => write!(fmt, "\tcall\t{name}"),
       Ret => write!(fmt, "\tret"),
     }

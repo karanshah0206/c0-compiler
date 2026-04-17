@@ -13,6 +13,8 @@ pub enum Trap {
   Abort,
   /// Memory error
   MemError,
+  /// Arithmetic error
+  Sigfpe,
 }
 
 impl Trap {
@@ -21,6 +23,7 @@ impl Trap {
     match self {
       Trap::Abort => ".L_abort",
       Trap::MemError => ".L_memerror",
+      Trap::Sigfpe => ".L_sigfpe",
     }
     .to_string()
   }
@@ -141,15 +144,10 @@ impl X86Context {
       .push(X86Instr::Jmp(trap.get_global_label()));
   }
 
-  /// Emit an if-else conditional jump instruction block.
-  pub fn emit_conditional(
-    &mut self,
-    pred: X86Operand,
-    holds_label_id: usize,
-    fails_label_id: usize,
-  ) {
+  /// Emit a jump if predicate holds.
+  pub fn emit_jump_if(&mut self, pred: X86Operand, label_id: usize) {
     self.emit_cmp(
-      pred.clone(),
+      pred,
       X86Operand::Immediate(Immediate {
         value: 0,
         width: pred.width(),
@@ -157,7 +155,45 @@ impl X86Context {
     );
     self
       .instructions
-      .push(X86Instr::Jne(self.format_label(holds_label_id)));
+      .push(X86Instr::Jne(self.format_label(label_id)));
+  }
+
+  /// Emit a jump if predicate less than value.
+  pub fn emit_trap_if_lesser(&mut self, pred: X86Operand, value: i64, trap: Trap) {
+    self.emit_cmp(
+      pred,
+      X86Operand::Immediate(Immediate {
+        value,
+        width: pred.width(),
+      }),
+    );
+    self
+      .instructions
+      .push(X86Instr::Jl(trap.get_global_label()));
+  }
+
+  /// Emit a jump if predicate is greater than value.
+  pub fn emit_trap_if_greater(&mut self, pred: X86Operand, value: i64, trap: Trap) {
+    self.emit_cmp(
+      pred,
+      X86Operand::Immediate(Immediate {
+        value,
+        width: pred.width(),
+      }),
+    );
+    self
+      .instructions
+      .push(X86Instr::Jg(trap.get_global_label()));
+  }
+
+  /// Emit an if-else conditional jump instruction block.
+  pub fn emit_conditional(
+    &mut self,
+    pred: X86Operand,
+    holds_label_id: usize,
+    fails_label_id: usize,
+  ) {
+    self.emit_jump_if(pred, holds_label_id);
     self.emit_jump(fails_label_id);
   }
 
@@ -171,7 +207,7 @@ impl X86Context {
           register: wreg.register,
           width: W64,
         }),
-        X86Operand::Stack(stack_var) => {
+        X86Operand::Stack(_) => {
           self.emit_move(src, X86Operand::Register(X86WReg::scratch(src.width())));
           X86Operand::Register(X86WReg::scratch(W64))
         }
@@ -250,11 +286,40 @@ impl X86Context {
       BinOp::Sal => X86Instr::Sal(src, dest.unwrap()),
       BinOp::Sar => X86Instr::Sar(src, dest.unwrap()),
       BinOp::CmpEq | BinOp::CmpNeq | BinOp::Gt | BinOp::Gte | BinOp::Lt | BinOp::Lte => {
-        unreachable!("Use emit_binary_comparator for binary comparators like {op}.")
+        unreachable!("Use emit_binary_cmp for binary comparators like {op}.")
       }
     };
 
     self.instructions.push(op_instr);
+  }
+
+  /// Emit a binary comparison between `lhs` and `rhs`, storing the result in `dest`.
+  pub fn emit_binary_cmp(&mut self, op: BinOp, lhs: X86Operand, rhs: X86Operand, dest: X86Operand) {
+    self.emit_cmp(lhs, rhs);
+
+    let dest = match dest {
+      X86Operand::Register(wreg) => X86Operand::Register(X86WReg {
+        register: wreg.register,
+        width: W8,
+      }),
+      X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
+        offset: stack_var.offset,
+        width: W8,
+      }),
+      X86Operand::Immediate(_) => {
+        unreachable!("Dest cannot be an immediate for binary comparator operations.")
+      }
+    };
+
+    self.instructions.push(match op {
+      BinOp::CmpEq => X86Instr::Sete(dest),
+      BinOp::CmpNeq => X86Instr::Setne(dest),
+      BinOp::Lt => X86Instr::Setl(dest),
+      BinOp::Gt => X86Instr::Setg(dest),
+      BinOp::Lte => X86Instr::Setle(dest),
+      BinOp::Gte => X86Instr::Setge(dest),
+      _ => unreachable!("Unknown binary comparator instruction {op}."),
+    });
   }
 
   /// Emit instructions for a function call.

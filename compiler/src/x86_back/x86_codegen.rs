@@ -112,8 +112,90 @@ fn generate_function(
               ctx.emit_pop(X86Operand::Register(X86WReg::modulo(W64)));
             }
           }
-          BinOp::Sal | BinOp::Sar => todo!(),
-          BinOp::CmpEq | BinOp::CmpNeq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => todo!(),
+          BinOp::Sal | BinOp::Sar => {
+            // generate shift validator in safe mode
+            if !allow_unsafe {
+              if let X86Operand::Immediate(imm) = rhs {
+                if imm.value < 0 || imm.value > 31 {
+                  ctx.emit_trap_jump(Trap::Sigfpe);
+                }
+              } else {
+                ctx.emit_trap_if_lesser(rhs, 0, Trap::Sigfpe);
+                ctx.emit_trap_if_greater(rhs, 31, Trap::Sigfpe);
+              }
+            }
+
+            match rhs {
+              X86Operand::Immediate(_) => {
+                ctx.emit_move(lhs, dest);
+                ctx.emit_binary_op(op, Some(rhs), Some(dest));
+              }
+              X86Operand::Register(_) | X86Operand::Stack(_) => {
+                let scratch = X86Operand::Register(X86WReg::scratch(dest.width()));
+                let shift_reg = X86WReg::shift().register;
+                let save_lhs = matches!(lhs, X86Operand::Register(reg) if lhs != dest && reg.register == shift_reg);
+                let save_dest =
+                  matches!(dest, X86Operand::Register(reg) if reg.register == shift_reg);
+                let temp_dest = if save_dest { scratch } else { dest };
+
+                ctx.emit_move(lhs, temp_dest);
+
+                if save_lhs {
+                  if save_dest {
+                    ctx.emit_push(lhs);
+                  } else {
+                    ctx.emit_move(lhs, scratch);
+                  }
+                }
+
+                ctx.emit_move(
+                  rhs,
+                  X86Operand::Register(X86WReg {
+                    register: shift_reg,
+                    width: rhs.width(),
+                  }),
+                );
+                ctx.emit_binary_op(op, None, Some(temp_dest));
+
+                if save_lhs {
+                  if save_dest {
+                    ctx.emit_pop(lhs);
+                  } else {
+                    ctx.emit_move(scratch, lhs);
+                  }
+                }
+
+                if save_dest {
+                  ctx.emit_move(temp_dest, dest);
+                }
+              }
+            };
+          }
+          BinOp::CmpEq | BinOp::CmpNeq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
+            let scratch = X86Operand::Register(X86WReg::scratch(dest.width()));
+            let mut op = op;
+
+            let (lhs, rhs) = match (lhs, rhs) {
+              (X86Operand::Immediate(_), X86Operand::Immediate(_))
+              | (X86Operand::Stack(_), X86Operand::Stack(_)) => {
+                ctx.emit_move(lhs, scratch);
+                (rhs, scratch)
+              }
+              (X86Operand::Immediate(_), _) => {
+                op = match op {
+                  BinOp::Lt => BinOp::Gt,
+                  BinOp::Gt => BinOp::Lt,
+                  BinOp::Lte => BinOp::Gte,
+                  BinOp::Gte => BinOp::Lte,
+                  _ => op,
+                };
+                (lhs, rhs)
+              }
+              _ => (rhs, lhs),
+            };
+
+            ctx.emit_binary_cmp(op, lhs, rhs, dest);
+          }
           BinOp::Add
           | BinOp::Sub
           | BinOp::Mul
@@ -198,6 +280,7 @@ fn generate_function(
       // Throw an exception
       Instr::Throw(exception) => ctx.emit_trap_jump(match exception {
         Exception::Abort => Trap::Abort,
+        Exception::Arith => Trap::Sigfpe,
       }),
       // Copy (move) instruction
       Instr::Move { dest, src } => {

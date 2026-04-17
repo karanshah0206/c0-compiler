@@ -272,6 +272,7 @@ fn generate_instr(
         *needs_abort = true;
         "\tcall void @abort()\n\tunreachable\n".to_string()
       }
+      Exception::Arith => unreachable!("Should not see arithmetic exception in LLVM generator."),
     },
     Instr::Phi { dest, srcs } => {
       let phi_ops = srcs
