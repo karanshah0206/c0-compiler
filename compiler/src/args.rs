@@ -4,7 +4,7 @@ use std::env;
 pub enum EmitTarget {
   Abstract,
   X86_64,
-  LLVM,
+  Llvm,
 }
 
 /// Configuration options for the compiler
@@ -60,7 +60,7 @@ pub fn parse_args() -> Config {
           match args[index + 1].as_str() {
             "abs" => config.target = EmitTarget::Abstract,
             "x86-64" => config.target = EmitTarget::X86_64,
-            "llvm" => config.target = EmitTarget::LLVM,
+            "llvm" => config.target = EmitTarget::Llvm,
             other => panic!("Unknown target {}", other),
           };
           index += 1;
@@ -70,7 +70,7 @@ pub fn parse_args() -> Config {
       }
       "-eabs" => config.target = EmitTarget::Abstract,
       "-ex86-64" => config.target = EmitTarget::X86_64,
-      "-ellvm" => config.target = EmitTarget::LLVM,
+      "-ellvm" => config.target = EmitTarget::Llvm,
       "-l" | "--link" => {
         if index + 1 < args.len() {
           config.header = Some(args[index + 1].clone());

@@ -137,7 +137,7 @@ fn main() {
 
           emit::emit_x86(config.source.unwrap(), x86_program).is_err() as i32
         }
-        args::EmitTarget::LLVM => {
+        args::EmitTarget::Llvm => {
           let (llvm_str, codegen_time) = time!(generate_llvm(
             &header_ast,
             &source_ast,

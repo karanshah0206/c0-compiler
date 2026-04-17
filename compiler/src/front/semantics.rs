@@ -21,7 +21,7 @@ pub fn analyze_program(header_ast: &mut ProgramAST, source_ast: &mut ProgramAST)
   // functions called in source code must be defined (even if those function calls are unreachable)
   // main is the entry point, it must always be defined
   let mut functions_to_define: HashSet<Ident> = ["main".to_string()].into_iter().collect();
-  symbol_table.declare_function(&"main".to_string(), &mut Typ::Int, &mut vec![], false);
+  symbol_table.declare_function(&"main".to_string(), &mut Typ::Int, &mut [], false);
 
   // analyze source program
   for declaration in source_ast {
@@ -360,7 +360,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       let (typ, _) = st
         .get_function_signature(id)
-        .expect(&format!("Unknown function {id}."));
+        .unwrap_or_else(|| panic!("Unknown function {id}."));
 
       match expr {
         Some(expr) => {
@@ -522,7 +522,7 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
 
       let (ret_typ, params) = st
         .get_function_signature(func_id)
-        .expect(&format!("Call to unknown function {func_id}"));
+        .unwrap_or_else(|| panic!("Call to unknown function {func_id}"));
 
       assert!(
         !st.get_mut_function_context(id).is_var_declared(func_id),

@@ -158,7 +158,7 @@ impl SymbolTable {
     self
       .function_context
       .get(id)
-      .expect(&format!("Unknown function {id}."))
+      .unwrap_or_else(|| panic!("Unknown function {id}."))
   }
 
   /// Get a mutable function context by function name.
@@ -166,7 +166,7 @@ impl SymbolTable {
     self
       .function_context
       .get_mut(id)
-      .expect(&format!("Unknown function {id}."))
+      .unwrap_or_else(|| panic!("Unknown function {id}."))
   }
 
   /// Check whether an identifier is a type alias.

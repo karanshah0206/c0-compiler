@@ -18,7 +18,7 @@ pub const SPILL: Color = 15;
 /// Spills all temps (i.e., no register allocation) at optiimzer level 0.
 pub fn register_allocation(
   program_ir: &ProgramIR,
-  symbol_table: &SymbolTable,
+  _symbol_table: &SymbolTable,
   optimizer_level: u8,
 ) -> Regalloc {
   let mut coloring = HashMap::new();
@@ -42,13 +42,15 @@ pub fn register_to_color(register: X86Reg) -> Color {
   X86Reg::allocatable()
     .iter()
     .position(|reg| reg == &register)
-    .expect(&format!(
-      "Register {} is not allocatable.",
-      X86WReg {
-        register,
-        width: W64
-      }
-    ))
+    .unwrap_or_else(|| {
+      panic!(
+        "Register {} is not allocatable.",
+        X86WReg {
+          register,
+          width: W64
+        }
+      )
+    })
 }
 
 /// Get the register corresponding to a color.
@@ -60,5 +62,5 @@ pub fn color_to_register(color: Color) -> X86Reg {
         .expect("Attempted fetching register for an uncolored temporary."),
     )
     .copied()
-    .expect(&format!("No register corresponds to color {color}."))
+    .unwrap_or_else(|| panic!("No register corresponds to color {color}."))
 }

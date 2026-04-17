@@ -129,12 +129,12 @@ pub enum Token<'a> {
 
   #[regex(r"0[xX][0-9a-fA-F]+", |lex| {
     let slice = lex.slice();
-    let res = i64::from_str_radix(&slice[2..], 16).ok().expect("Failed to parse hexadecimal constant.");
+    let res = i64::from_str_radix(&slice[2..], 16).expect("Failed to parse hexadecimal constant.");
     assert!(res <= 0xffffffff, "Hexadecimal constant is out of bounds.");
     res
   })]
   #[regex(r"0|[1-9][0-9]*", |lex| {
-    let res = lex.slice().parse::<i64>().ok().expect("Failed to parse decimal constant.");
+    let res = lex.slice().parse::<i64>().expect("Failed to parse decimal constant.");
     assert!(res <= i64::from(i32::MIN).abs(), "Decimal constant is out of bounds.");
     res
   })]

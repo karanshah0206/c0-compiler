@@ -35,38 +35,34 @@ impl Trap {
 
 /// Generate global trap instructions.
 pub fn generate_traps() -> Vec<X86Instr> {
-  let mut traps = Vec::new();
-
-  // abort trap
-  traps.push(X86Instr::Label(Trap::Abort.get_global_label()));
-  traps.push(X86Instr::Call("abort".to_string()));
-
-  // arithmetic trap
-  traps.push(X86Instr::Label(Trap::Sigfpe.get_global_label()));
-  traps.push(X86Instr::Mov(
-    X86Operand::Immediate(Immediate {
-      value: 0,
-      width: W64,
-    }),
-    X86Operand::Register(X86WReg::scratch(W64)),
-  ));
-  traps.push(X86Instr::IDiv(X86Operand::Register(X86WReg::scratch(W64))));
-
-  // memory trap
-  traps.push(X86Instr::Label(Trap::MemError.get_global_label()));
-  traps.push(X86Instr::Mov(
-    X86Operand::Immediate(Immediate {
-      value: 12,
-      width: W64,
-    }),
-    X86Operand::Register(X86WReg {
-      register: X86Reg::call_argument()[0],
-      width: W64,
-    }),
-  ));
-  traps.push(X86Instr::Call("raise".to_string()));
-
-  traps
+  vec![
+    // abort trap
+    X86Instr::Label(Trap::Abort.get_global_label()),
+    X86Instr::Call("abort".to_string()),
+    // arithmetic trap
+    X86Instr::Label(Trap::Sigfpe.get_global_label()),
+    X86Instr::Mov(
+      X86Operand::Immediate(Immediate {
+        value: 0,
+        width: W64,
+      }),
+      X86Operand::Register(X86WReg::scratch(W64)),
+    ),
+    X86Instr::IDiv(X86Operand::Register(X86WReg::scratch(W64))),
+    // memory trap
+    X86Instr::Label(Trap::MemError.get_global_label()),
+    X86Instr::Mov(
+      X86Operand::Immediate(Immediate {
+        value: 12,
+        width: W64,
+      }),
+      X86Operand::Register(X86WReg {
+        register: X86Reg::call_argument()[0],
+        width: W64,
+      }),
+    ),
+    X86Instr::Call("raise".to_string()),
+  ]
 }
 
 /// x86-64 code generation context.
@@ -118,20 +114,22 @@ impl X86Context {
 
   /// Get concrete location assigned to a compile-time temporary.
   pub fn get_temp_location(&mut self, temp: Temp) -> X86Operand {
-    let color = *self.regalloc.get(temp.0).expect(&format!(
-      "Unknown temporary with id {} found in x86 codegen.",
-      temp.0
-    ));
+    let color = *self
+      .regalloc
+      .get(temp.0)
+      .unwrap_or_else(|| panic!("Unknown temporary with id {} found in x86 codegen.", temp.0));
 
     if color == SPILL {
       X86Operand::Stack(
         self
           .stack_allocation
           .get(&temp.0)
-          .expect(&format!(
-            "Missing stack allocation for temporary with id {} in x86 codegen.",
-            temp.0
-          ))
+          .unwrap_or_else(|| {
+            panic!(
+              "Missing stack allocation for temporary with id {} in x86 codegen.",
+              temp.0
+            )
+          })
           .as_width(width_for_type(&temp.1)),
       )
     } else {
@@ -195,7 +193,7 @@ impl X86Context {
   /// Emit a (void or non-void) return instruction.
   pub fn emit_return(&mut self, src: Option<X86Operand>) {
     if let Some(src) = src {
-      self.emit_move(src.clone(), X86Operand::Register(X86WReg::ret(src.width())));
+      self.emit_move(src, X86Operand::Register(X86WReg::ret(src.width())));
     }
     self
       .instructions
@@ -521,12 +519,12 @@ impl X86Context {
   }
 
   /// Emit instructions to place args according to System V ABI for function calls.
-  fn emit_call_args_placement(&mut self, args: &Vec<X86Operand>) {
+  fn emit_call_args_placement(&mut self, args: &[X86Operand]) {
     for (index, &register) in X86Reg::call_argument().iter().enumerate() {
       if index >= args.len() {
         return;
       }
-      let arg = args[index].clone();
+      let arg = args[index];
       let width = arg.width();
       self.emit_move(arg, X86Operand::Register(X86WReg { register, width }));
     }

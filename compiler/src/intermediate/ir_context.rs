@@ -477,7 +477,7 @@ impl IRContext {
     if visited.insert(label)
       && let Some(block) = self.blocks.get(&label)
     {
-      for successor in self.get_successors_of_block(&block) {
+      for successor in self.get_successors_of_block(block) {
         self.reachable_generator_dfs(successor, visited, order);
       }
       order.push(block.label);

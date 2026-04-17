@@ -73,7 +73,7 @@ pub enum Expr {
   /// Ternary operator (boolean expr, if-expr, else-expr, type)
   Ternop(Box<Expr>, Box<Expr>, Box<Expr>, Option<Typ>),
   /// Function call (identifier, arguments list, type)
-  Call(Ident, Vec<Box<Expr>>, Option<Typ>),
+  Call(Ident, Vec<Expr>, Option<Typ>),
 }
 
 impl Expr {
@@ -156,7 +156,7 @@ pub enum PostOp {
 
 impl PostOp {
   /// Transform post-operator to binary operator.
-  pub fn to_binop(&self) -> BinOp {
+  pub fn to_binop(self) -> BinOp {
     use BinOp::*;
 
     match self {
@@ -195,7 +195,7 @@ pub enum AsnOp {
 
 impl AsnOp {
   /// Try transforming assignment operator to binary operator.
-  pub fn to_binop(&self) -> Option<BinOp> {
+  pub fn to_binop(self) -> Option<BinOp> {
     use BinOp::*;
 
     match self {

@@ -335,14 +335,14 @@ Call : Expr = {
   <i: Ident> "(" ")"=> Expr::Call(i, vec![], None),
   <i: Ident> "(" <e: Expr> <af: ArgFollow*> ")" => Expr::Call(
     i,
-    std::iter::once(Box::new(e)).chain(af.into_iter()).collect::<Vec<Box<Expr>>>(),
+    std::iter::once(e).chain(af.into_iter()).collect::<Vec<Expr>>(),
     None
   ),
 }
 
 // Arguments following the first one in an function call
-ArgFollow : Box<Expr> = {
-  "," <e: Expr> => Box::new(e),
+ArgFollow : Expr = {
+  "," <e: Expr> => e,
 }
 
 // ############### Operations ###############

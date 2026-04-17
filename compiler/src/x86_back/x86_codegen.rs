@@ -8,7 +8,7 @@ use crate::intermediate::{
 };
 use crate::x86_back::{
   regalloc::Regalloc,
-  x86_asm::{Width::*, X86Instr, X86Operand, X86WReg},
+  x86_asm::{X86Instr, X86Operand, X86WReg},
   x86_context::{Trap, X86Context, generate_traps},
 };
 
@@ -30,9 +30,7 @@ pub fn generate_assembly(
   for (function_name, ir_context) in program {
     let coloring = regalloc
       .get(function_name)
-      .expect(&format!(
-        "No register allocation found for function {function_name}."
-      ))
+      .unwrap_or_else(|| panic!("No register allocation found for function {function_name}."))
       .clone();
     let param_types = symbol_table
       .get_function_context(function_name)
@@ -211,7 +209,7 @@ fn generate_function(
       Instr::UnOp { op, dest, src } => {
         let src = ctx.get_operand_location(src);
         let dest = ctx.get_temp_location(dest);
-        ctx.emit_move(src, dest.clone());
+        ctx.emit_move(src, dest);
         ctx.emit_unary_op(op, dest);
       }
       // Function-scoped label
@@ -229,11 +227,7 @@ fn generate_function(
       }
       // Function call
       Instr::Call { dest, name, args } => {
-        let dest = if let Some(dest) = dest {
-          Some(ctx.get_temp_location(dest))
-        } else {
-          None
-        };
+        let dest = dest.map(|dest| ctx.get_temp_location(dest));
         let args = args
           .iter()
           .map(|arg| ctx.get_operand_location(arg.clone()))
@@ -248,11 +242,7 @@ fn generate_function(
       }
       // Return from function
       Instr::Return(src) => {
-        let src = if let Some(src) = src {
-          Some(ctx.get_operand_location(src))
-        } else {
-          None
-        };
+        let src = src.map(|src| ctx.get_operand_location(src));
         ctx.emit_return(src);
       }
       // Throw an exception

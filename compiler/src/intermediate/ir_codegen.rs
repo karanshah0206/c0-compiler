@@ -191,11 +191,11 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
     }
     Stmt::For(init_stmt, expr, step_stmt, body_stmt) => {
       // evaluate loop initializer
-      if let Some(init_stmt) = init_stmt.as_ref() {
-        if munch_statement(init_stmt, ctx) {
-          // if loop initializer terminates, no need to evaluate the rest of the loop
-          return true;
-        }
+      if let Some(init_stmt) = init_stmt.as_ref()
+        && munch_statement(init_stmt, ctx)
+      {
+        // if loop initializer terminates, no need to evaluate the rest of the loop
+        return true;
       }
 
       let header_label = ctx.create_block();
