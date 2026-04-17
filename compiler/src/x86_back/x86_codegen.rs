@@ -70,21 +70,6 @@ fn generate_function(
 
         match op {
           BinOp::Div | BinOp::Mod => {
-            let (save_quot_reg, save_mod_reg) = match dest {
-              X86Operand::Register(wreg) if wreg == X86WReg::quotient(dest.width()) => {
-                (true, false)
-              }
-              X86Operand::Register(wreg) if wreg == X86WReg::modulo(dest.width()) => (false, true),
-              _ => (false, false),
-            };
-
-            if save_quot_reg {
-              ctx.emit_push(X86Operand::Register(X86WReg::quotient(W64)));
-            }
-            if save_mod_reg {
-              ctx.emit_push(X86Operand::Register(X86WReg::modulo(W64)));
-            }
-
             let rhs = if matches!(rhs, X86Operand::Register(_))
               && (rhs == X86Operand::Register(X86WReg::quotient(rhs.width()))
                 || rhs == X86Operand::Register(X86WReg::modulo(rhs.width())))
@@ -96,20 +81,13 @@ fn generate_function(
               rhs
             };
 
-            ctx.emit_move(X86Operand::Register(X86WReg::quotient(dest.width())), lhs);
+            ctx.emit_move(lhs, X86Operand::Register(X86WReg::quotient(dest.width())));
             ctx.emit_binary_op(op, Some(rhs), None);
 
             if matches!(op, BinOp::Div) {
               ctx.emit_move(X86Operand::Register(X86WReg::quotient(dest.width())), dest);
             } else {
               ctx.emit_move(X86Operand::Register(X86WReg::modulo(dest.width())), dest);
-            }
-
-            if save_quot_reg {
-              ctx.emit_pop(X86Operand::Register(X86WReg::quotient(W64)));
-            }
-            if save_mod_reg {
-              ctx.emit_pop(X86Operand::Register(X86WReg::modulo(W64)));
             }
           }
           BinOp::Sal | BinOp::Sar => {
