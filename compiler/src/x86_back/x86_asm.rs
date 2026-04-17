@@ -1,7 +1,7 @@
 use std::fmt::{Display, Error, Formatter};
 
 /// X86-64 general-purpose registers.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum X86Reg {
   Rax,
   Rbx,
@@ -136,6 +136,16 @@ pub struct StackVar {
   pub offset: usize,
   /// Temporary width.
   pub width: Width,
+}
+
+impl StackVar {
+  /// Return stack variable of custom width with identical offset.
+  pub fn as_width(&self, width: Width) -> Self {
+    StackVar {
+      offset: self.offset,
+      width,
+    }
+  }
 }
 
 /// Operand to x86-64 instructions.

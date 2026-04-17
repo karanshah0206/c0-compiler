@@ -9,7 +9,7 @@ use crate::intermediate::{
 use crate::x86_back::{
   regalloc::Regalloc,
   x86_asm::{Width::*, X86Instr, X86Operand, X86WReg},
-  x86_context::{Trap, X86Context},
+  x86_context::{Trap, X86Context, generate_traps},
 };
 
 /// An x86-64 program is the assembly instructions of its functions and traps.
@@ -49,7 +49,7 @@ pub fn generate_assembly(
 
   X86Program {
     functions,
-    traps: Vec::new(),
+    traps: generate_traps(),
   }
 }
 
@@ -222,7 +222,7 @@ fn generate_function(
               }
             } else {
               ctx.emit_move(lhs, target);
-              ctx.emit_binary_op(op, Some(lhs), Some(target));
+              ctx.emit_binary_op(op, Some(rhs), Some(target));
             }
 
             ctx.emit_move(target, dest);
@@ -293,5 +293,5 @@ fn generate_function(
     };
   }
 
-  todo!();
+  ctx.assemble()
 }

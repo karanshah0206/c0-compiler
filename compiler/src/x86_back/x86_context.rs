@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::front::ast::{BinOp, Typ, UnOp};
 use crate::intermediate::ir_asm::{Operand, Temp};
@@ -6,6 +6,10 @@ use crate::x86_back::{
   regalloc::*,
   x86_asm::{Width::*, *},
 };
+
+/// Width in bytes for a slot on stack allotted to a temporary.
+const STACK_SLOT_WIDTH: usize = 8;
+const STACK_ALIGNMENT: usize = 16;
 
 /// Potential kinds of traps that can be called in the program.
 pub enum Trap {
@@ -29,12 +33,48 @@ impl Trap {
   }
 }
 
+/// Generate global trap instructions.
+pub fn generate_traps() -> Vec<X86Instr> {
+  let mut traps = Vec::new();
+
+  // abort trap
+  traps.push(X86Instr::Label(Trap::Abort.get_global_label()));
+  traps.push(X86Instr::Call("abort".to_string()));
+
+  // arithmetic trap
+  traps.push(X86Instr::Label(Trap::Sigfpe.get_global_label()));
+  traps.push(X86Instr::Mov(
+    X86Operand::Immediate(Immediate {
+      value: 0,
+      width: W64,
+    }),
+    X86Operand::Register(X86WReg::scratch(W64)),
+  ));
+  traps.push(X86Instr::IDiv(X86Operand::Register(X86WReg::scratch(W64))));
+
+  // memory trap
+  traps.push(X86Instr::Label(Trap::MemError.get_global_label()));
+  traps.push(X86Instr::Mov(
+    X86Operand::Immediate(Immediate {
+      value: 12,
+      width: W64,
+    }),
+    X86Operand::Register(X86WReg {
+      register: X86Reg::call_argument()[0],
+      width: W64,
+    }),
+  ));
+  traps.push(X86Instr::Call("raise".to_string()));
+
+  traps
+}
+
 /// x86-64 code generation context.
 pub struct X86Context {
   /// Generated assembly instructions in this context.
   instructions: Vec<X86Instr>,
   /// Set of callee-saved registers used in this context.
-  used_callee_saved: HashSet<X86Reg>,
+  used_callee_saved: BTreeSet<X86Reg>,
   /// Register allocation for temporaries in this context.
   regalloc: Vec<Color>,
   /// Stack allocation for operands in this context.
@@ -50,26 +90,30 @@ pub struct X86Context {
 impl X86Context {
   /// Generate a new x86-64 code generation context for a function.
   pub fn new(regalloc: Vec<Color>, param_types: Vec<Typ>, label_prefix: String) -> Self {
-    X86Context {
+    let mut ctx = X86Context {
       instructions: Vec::new(),
-      used_callee_saved: HashSet::new(),
+      used_callee_saved: BTreeSet::new(),
       regalloc,
       stack_allocation: HashMap::new(),
       stack_depth: 0,
       param_types,
       label_prefix,
-    }
-  }
+    };
 
-  /// Get the concrete location of sized immediate assigned to an operand in the IR.
-  pub fn get_operand_location(&mut self, operand: Operand) -> X86Operand {
-    match operand {
-      Operand::Const((value, typ)) => X86Operand::Immediate(Immediate {
-        value,
-        width: width_for_type(&typ),
-      }),
-      Operand::Temp(temp) => self.get_temp_location(temp),
+    for (id, &color) in ctx.regalloc.iter().enumerate() {
+      if color == SPILL {
+        ctx.stack_allocation.insert(
+          id,
+          StackVar {
+            offset: ctx.stack_depth,
+            width: W64,
+          },
+        );
+        ctx.stack_depth += STACK_SLOT_WIDTH;
+      }
     }
+
+    ctx
   }
 
   /// Get concrete location assigned to a compile-time temporary.
@@ -88,13 +132,28 @@ impl X86Context {
             "Missing stack allocation for temporary with id {} in x86 codegen.",
             temp.0
           ))
-          .clone(),
+          .as_width(width_for_type(&temp.1)),
       )
     } else {
+      let register = color_to_register(color);
+      if X86Reg::callee_saved().contains(&register) {
+        self.used_callee_saved.insert(register);
+      }
       X86Operand::Register(X86WReg {
-        register: color_to_register(color),
+        register,
         width: width_for_type(&temp.1),
       })
+    }
+  }
+
+  /// Get the concrete location of sized immediate assigned to an operand in the IR.
+  pub fn get_operand_location(&mut self, operand: Operand) -> X86Operand {
+    match operand {
+      Operand::Const((value, typ)) => X86Operand::Immediate(Immediate {
+        value,
+        width: width_for_type(&typ),
+      }),
+      Operand::Temp(temp) => self.get_temp_location(temp),
     }
   }
 
@@ -113,7 +172,18 @@ impl X86Context {
     );
 
     if src != dest {
-      self.instructions.push(X86Instr::Mov(src, dest));
+      if matches!((src, dest), (X86Operand::Stack(_), X86Operand::Stack(_))) {
+        self.instructions.push(X86Instr::Mov(
+          src,
+          X86Operand::Register(X86WReg::scratch(src.width())),
+        ));
+        self.instructions.push(X86Instr::Mov(
+          X86Operand::Register(X86WReg::scratch(dest.width())),
+          dest,
+        ));
+      } else {
+        self.instructions.push(X86Instr::Mov(src, dest));
+      }
     }
   }
 
@@ -127,7 +197,9 @@ impl X86Context {
     if let Some(src) = src {
       self.emit_move(src.clone(), X86Operand::Register(X86WReg::ret(src.width())));
     }
-    self.instructions.push(X86Instr::Ret);
+    self
+      .instructions
+      .push(X86Instr::Jmp(format!("{}exit", self.label_prefix)));
   }
 
   /// Emit an unconditional jump instruction to destination label.
@@ -349,6 +421,71 @@ impl X86Context {
       ));
     }
     self.emit_restore_caller_saved(return_reg);
+  }
+
+  /// Generate final assembly for this context.
+  pub fn assemble(&mut self) -> Vec<X86Instr> {
+    let mut assembly: Vec<X86Instr> = Vec::new();
+
+    // Save callee-saved registers
+    for &register in self.used_callee_saved.iter() {
+      assembly.push(X86Instr::Push(X86Operand::Register(X86WReg {
+        register,
+        width: W64,
+      })));
+    }
+
+    // Allocate and align stack slots for spilled temporaries
+    let alignment = (self.used_callee_saved.len() + self.stack_depth) % STACK_ALIGNMENT;
+    let frame_size = self.stack_depth
+      + if alignment != 8 {
+        if alignment < 8 {
+          8 - alignment
+        } else {
+          24 - alignment
+        }
+      } else {
+        0
+      };
+    if frame_size > 0 {
+      assembly.push(X86Instr::Sub(
+        X86Operand::Immediate(Immediate {
+          value: frame_size as i64,
+          width: W64,
+        }),
+        X86Operand::Register(X86WReg::stack_pointer()),
+      ));
+    }
+
+    // Append program body
+    assembly.append(&mut self.instructions);
+
+    // Add exit label
+    assembly.push(X86Instr::Label(format!("{}exit", self.label_prefix)));
+
+    // Deallocate stack space
+    if frame_size > 0 {
+      assembly.push(X86Instr::Add(
+        X86Operand::Immediate(Immediate {
+          value: frame_size as i64,
+          width: W64,
+        }),
+        X86Operand::Register(X86WReg::stack_pointer()),
+      ));
+    }
+
+    // Restore callee-saved registers
+    for &register in self.used_callee_saved.iter().rev() {
+      assembly.push(X86Instr::Pop(X86Operand::Register(X86WReg {
+        register,
+        width: W64,
+      })));
+    }
+
+    // Add the return instruction
+    assembly.push(X86Instr::Ret);
+
+    assembly
   }
 
   /// Emit instructions to save caller-saved registers.
