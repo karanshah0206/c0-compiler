@@ -49,22 +49,22 @@ impl BasicBlock {
 
     // add moves within body at jump
     self.body.drain(..).for_each(|instr| {
-      if let Instr::JumpTo(phi_label) = instr {
-        if let Some(moves) = moves_by_label.get(&phi_label) {
-          for (src, dest) in moves.clone() {
-            new_body.push(Instr::Move { dest, src })
-          }
+      if let Instr::JumpTo(phi_label) = instr
+        && let Some(moves) = moves_by_label.get(&phi_label)
+      {
+        for (src, dest) in moves.clone() {
+          new_body.push(Instr::Move { dest, src })
         }
       }
       new_body.push(instr);
     });
 
     // add moves at the end of body before terminal jump
-    if let Some(Instr::JumpTo(terminal_label)) = self.terminator {
-      if let Some(moves) = moves_by_label.get(&terminal_label) {
-        for (src, dest) in moves.clone() {
-          new_body.push(Instr::Move { dest, src })
-        }
+    if let Some(Instr::JumpTo(terminal_label)) = self.terminator
+      && let Some(moves) = moves_by_label.get(&terminal_label)
+    {
+      for (src, dest) in moves.clone() {
+        new_body.push(Instr::Move { dest, src })
       }
     }
 
@@ -364,7 +364,7 @@ impl IRContext {
     }
 
     for (_, moves_by_label) in phi_moves_by_pred.iter_mut() {
-      for (_, moves) in moves_by_label {
+      for moves in moves_by_label.values_mut() {
         self.phi_moves_resolution(moves);
       }
     }
@@ -373,9 +373,9 @@ impl IRContext {
       self
         .blocks
         .get_mut(&pred_label)
-        .expect(&format!(
-          "Unknown block with label {pred_label} found in SSA deconstruction."
-        ))
+        .unwrap_or_else(|| {
+          panic!("Unknown block with label {pred_label} found in SSA deconstruction.")
+        })
         .add_moves_for_phi(moves_by_label);
     }
   }
@@ -450,10 +450,11 @@ impl IRContext {
 
     // create a resolution move temporary for move sources that are also move destinations
     for (src, _) in moves.iter() {
-      if let Operand::Temp(src) = src {
-        if dests.contains(&src) && src_temp_mapping.get(&src).unwrap() == src {
-          src_temp_mapping.insert(src.clone(), self.create_temp(src.1.clone()));
-        }
+      if let Operand::Temp(src) = src
+        && dests.contains(src)
+        && src_temp_mapping.get(src).unwrap() == src
+      {
+        src_temp_mapping.insert(src.clone(), self.create_temp(src.1.clone()));
       }
     }
 
@@ -470,7 +471,7 @@ impl IRContext {
       match src {
         Operand::Const(_) => resolved_moves.push((src.clone(), dest.clone())),
         Operand::Temp(src) => resolved_moves.push((
-          Operand::Temp(src_temp_mapping.get(&src).unwrap().clone()),
+          Operand::Temp(src_temp_mapping.get(src).unwrap().clone()),
           dest.clone(),
         )),
       }
