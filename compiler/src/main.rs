@@ -96,11 +96,13 @@ fn main() {
       }
 
       // 4. Lower AST to IR
-      let (program_ir, ir_gen_time) = time!(ir_codegen::munch_program(&source_ast, &symbol_table));
+      let (mut program_ir, ir_gen_time) =
+        time!(ir_codegen::munch_program(&source_ast, &symbol_table));
 
       if config.dump_ir {
-        for (func_name, func_ir) in &program_ir {
+        for (func_name, func_ir) in &mut program_ir {
           println!("{func_name}");
+          func_ir.deconstruct_ssa();
           for ir_instr in func_ir.linearize() {
             println!("\t{ir_instr}");
           }
@@ -118,7 +120,7 @@ fn main() {
         args::EmitTarget::X86_64 => {
           // 5. Register allocation
           let (coloring, regalloc_time) = time!(regalloc::register_allocation(
-            &program_ir,
+            &mut program_ir,
             &symbol_table,
             config.optimizer_level
           ));

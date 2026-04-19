@@ -34,6 +34,42 @@ impl BasicBlock {
       incomplete_phis: HashMap::new(),
     }
   }
+
+  /// Get all phi instructions within this basic block and remove them from the body.
+  fn get_and_remove_phis(&mut self) -> Vec<Instr> {
+    self
+      .body
+      .extract_if(.., |instr| matches!(instr, Instr::Phi { .. }))
+      .collect()
+  }
+
+  /// Insert copies before jumps to phi blocks.
+  fn add_moves_for_phi(&mut self, moves_by_label: HashMap<Label, Vec<(Operand, Temp)>>) {
+    let mut new_body = Vec::new();
+
+    // add moves within body at jump
+    self.body.drain(..).for_each(|instr| {
+      if let Instr::JumpTo(phi_label) = instr {
+        if let Some(moves) = moves_by_label.get(&phi_label) {
+          for (src, dest) in moves.clone() {
+            new_body.push(Instr::Move { dest, src })
+          }
+        }
+      }
+      new_body.push(instr);
+    });
+
+    // add moves at the end of body before terminal jump
+    if let Some(Instr::JumpTo(terminal_label)) = self.terminator {
+      if let Some(moves) = moves_by_label.get(&terminal_label) {
+        for (src, dest) in moves.clone() {
+          new_body.push(Instr::Move { dest, src })
+        }
+      }
+    }
+
+    self.body = new_body;
+  }
 }
 
 /// Context for generating intermediate representation in SSA form (Braun et al. technique).
@@ -299,6 +335,150 @@ impl IRContext {
     }
   }
 
+  /// Eliminate phi instructions and insert copies to normalize IR.
+  pub fn deconstruct_ssa(&mut self) {
+    let phis_by_block: HashMap<Label, Vec<Instr>> = self
+      .blocks
+      .iter_mut()
+      .map(|(label, block)| (*label, block.get_and_remove_phis()))
+      .collect();
+
+    let mut phi_moves_by_pred: HashMap<Label, HashMap<Label, Vec<(Operand, Temp)>>> =
+      HashMap::new();
+    for (phi_block_label, phi_instrs) in phis_by_block {
+      for phi_instr in phi_instrs {
+        match phi_instr {
+          Instr::Phi { dest, srcs } => {
+            for (pred_label, src) in srcs {
+              phi_moves_by_pred
+                .entry(pred_label)
+                .or_default()
+                .entry(phi_block_label)
+                .or_default()
+                .push((src, dest.clone()));
+            }
+          }
+          _ => unreachable!("Found non-phi instruction in SSA deconstruction."),
+        }
+      }
+    }
+
+    for (_, moves_by_label) in phi_moves_by_pred.iter_mut() {
+      for (_, moves) in moves_by_label {
+        self.phi_moves_resolution(moves);
+      }
+    }
+
+    for (pred_label, moves_by_label) in phi_moves_by_pred {
+      self
+        .blocks
+        .get_mut(&pred_label)
+        .expect(&format!(
+          "Unknown block with label {pred_label} found in SSA deconstruction."
+        ))
+        .add_moves_for_phi(moves_by_label);
+    }
+  }
+
+  /// Transform CFG into linearized IR in reverse post-order from entry block.
+  pub fn linearize(&self) -> Vec<Instr> {
+    let mut linear_ir = Vec::new();
+    for label in self.get_reachable_in_rpo() {
+      let block = self.blocks.get(&label).unwrap();
+      linear_ir.push(Instr::Label(block.label));
+      linear_ir.extend(block.body.clone());
+      if let Some(terminator) = &block.terminator {
+        linear_ir.push(terminator.clone());
+      }
+    }
+    linear_ir
+  }
+
+  /// Get labels of reachable blocks in reverse post-order entry block.
+  fn get_reachable_in_rpo(&self) -> Vec<Label> {
+    let mut visited: HashSet<Label> = HashSet::new();
+    let mut order: Vec<Label> = Vec::new();
+    self.reachable_generator_dfs(Label(0), &mut visited, &mut order);
+    order.reverse();
+    order
+  }
+
+  /// Helper to generate successor blocks in order when linearlizing IR.
+  fn reachable_generator_dfs(
+    &self,
+    label: Label,
+    visited: &mut HashSet<Label>,
+    order: &mut Vec<Label>,
+  ) {
+    if visited.insert(label)
+      && let Some(block) = self.blocks.get(&label)
+    {
+      for successor in self.get_successors_of_block(block) {
+        self.reachable_generator_dfs(successor, visited, order);
+      }
+      order.push(block.label);
+    }
+  }
+
+  /// Get labels of direct successors of given block.
+  fn get_successors_of_block(&self, block: &BasicBlock) -> Vec<Label> {
+    match &block.terminator {
+      Some(Instr::JumpTo(label)) => vec![*label],
+      Some(Instr::JumpIf { holds, fails, .. }) => {
+        let mut successors = vec![*holds];
+        successors.push(*fails);
+        successors
+      }
+      _ => vec![],
+    }
+  }
+
+  /// Resolve any parallel copies by adding temp moves and return move ordering.
+  fn phi_moves_resolution(&mut self, moves: &mut Vec<(Operand, Temp)>) {
+    // get all unique move destinations
+    let dests: HashSet<_> = HashSet::from_iter(moves.iter().map(|(_, dest)| dest.clone()));
+
+    // get unique move source temporaries, create a mapping to potential resolution temporary
+    let mut src_temp_mapping: HashMap<Temp, Temp> =
+      HashMap::from_iter(moves.iter().filter_map(|(src, _)| {
+        if let Operand::Temp(src) = src {
+          Some((src.clone(), src.clone()))
+        } else {
+          None
+        }
+      }));
+
+    // create a resolution move temporary for move sources that are also move destinations
+    for (src, _) in moves.iter() {
+      if let Operand::Temp(src) = src {
+        if dests.contains(&src) && src_temp_mapping.get(&src).unwrap() == src {
+          src_temp_mapping.insert(src.clone(), self.create_temp(src.1.clone()));
+        }
+      }
+    }
+
+    // add resolution moves for conflicting sources/destinations
+    let mut resolved_moves = Vec::new();
+    for (src, src_temp) in src_temp_mapping.iter() {
+      if src != src_temp {
+        resolved_moves.push((Operand::Temp(src.clone()), src_temp.clone()));
+      }
+    }
+
+    // add the phi moves, replacing conflicting sources with move resolution temporaries
+    for (src, dest) in moves.iter() {
+      match src {
+        Operand::Const(_) => resolved_moves.push((src.clone(), dest.clone())),
+        Operand::Temp(src) => resolved_moves.push((
+          Operand::Temp(src_temp_mapping.get(&src).unwrap().clone()),
+          dest.clone(),
+        )),
+      }
+    }
+
+    *moves = resolved_moves;
+  }
+
   /// Add operand to incomplete phi in block with label `block_label`.
   fn resolve_incompete_phi_in_block(
     &mut self,
@@ -442,58 +622,5 @@ impl IRContext {
 
     // should never reach here if the semantic analysis and typechecker pass.
     unreachable!("Failed to ingfer type of variable {var_id} within block label {block_label}.");
-  }
-
-  /// Transform CFG into linearized IR in reverse post-order from entry block.
-  pub fn linearize(&self) -> Vec<Instr> {
-    let mut linear_ir = Vec::new();
-    for label in self.get_reachable_in_rpo() {
-      let block = self.blocks.get(&label).unwrap();
-      linear_ir.push(Instr::Label(block.label));
-      linear_ir.extend(block.body.clone());
-      if let Some(terminator) = &block.terminator {
-        linear_ir.push(terminator.clone());
-      }
-    }
-    linear_ir
-  }
-
-  /// Get labels of reachable blocks in reverse post-order entry block.
-  fn get_reachable_in_rpo(&self) -> Vec<Label> {
-    let mut visited: HashSet<Label> = HashSet::new();
-    let mut order: Vec<Label> = Vec::new();
-    self.reachable_generator_dfs(Label(0), &mut visited, &mut order);
-    order.reverse();
-    order
-  }
-
-  /// Helper to generate successor blocks in order when linearlizing IR.
-  fn reachable_generator_dfs(
-    &self,
-    label: Label,
-    visited: &mut HashSet<Label>,
-    order: &mut Vec<Label>,
-  ) {
-    if visited.insert(label)
-      && let Some(block) = self.blocks.get(&label)
-    {
-      for successor in self.get_successors_of_block(block) {
-        self.reachable_generator_dfs(successor, visited, order);
-      }
-      order.push(block.label);
-    }
-  }
-
-  /// Get labels of direct successors of given block.
-  fn get_successors_of_block(&self, block: &BasicBlock) -> Vec<Label> {
-    match &block.terminator {
-      Some(Instr::JumpTo(label)) => vec![*label],
-      Some(Instr::JumpIf { holds, fails, .. }) => {
-        let mut successors = vec![*holds];
-        successors.push(*fails);
-        successors
-      }
-      _ => vec![],
-    }
   }
 }

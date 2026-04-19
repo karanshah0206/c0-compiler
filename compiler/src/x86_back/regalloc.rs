@@ -17,13 +17,15 @@ pub const SPILL: Color = 15;
 /// Maps temporaries in functions of program IR to registers or spills to stack.
 /// Spills all temps (i.e., no register allocation) at optiimzer level 0.
 pub fn register_allocation(
-  program_ir: &ProgramIR,
+  program_ir: &mut ProgramIR,
   _symbol_table: &SymbolTable,
   optimizer_level: u8,
 ) -> Regalloc {
   let mut coloring = HashMap::new();
 
   for (func_name, func_ir) in program_ir {
+    func_ir.deconstruct_ssa();
+
     if optimizer_level == 0 {
       coloring.insert(
         func_name.to_string(),
