@@ -187,7 +187,10 @@ impl X86Context {
 
   /// Emit a compare instruction.
   pub fn emit_cmp(&mut self, src: X86Operand, dest: X86Operand) {
-    self.instructions.push(X86Instr::Cmp(src, dest));
+    match (src, dest) {
+      (_, X86Operand::Immediate(_)) => self.instructions.push(X86Instr::Cmp(dest, src)),
+      _ => self.instructions.push(X86Instr::Cmp(src, dest)),
+    }
   }
 
   /// Emit a (void or non-void) return instruction.

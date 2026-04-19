@@ -148,7 +148,7 @@ fn generate_function(
             };
           }
           BinOp::CmpEq | BinOp::CmpNeq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
-            let scratch = X86Operand::Register(X86WReg::scratch(dest.width()));
+            let scratch = X86Operand::Register(X86WReg::scratch(rhs.width()));
             let mut op = op;
 
             let (lhs, rhs) = match (lhs, rhs) {
