@@ -220,7 +220,7 @@ fn generate_function(
       Instr::JumpIf { pred, holds, fails } => {
         let pred = ctx.get_operand_location(pred);
         if let X86Operand::Immediate(imm) = pred {
-          ctx.emit_jump(if imm.value == 0 { holds.0 } else { fails.0 });
+          ctx.emit_jump(if imm.value != 0 { holds.0 } else { fails.0 });
         } else {
           ctx.emit_conditional(pred, holds.0, fails.0);
         }
