@@ -187,10 +187,7 @@ impl X86Context {
 
   /// Emit a compare instruction.
   pub fn emit_cmp(&mut self, src: X86Operand, dest: X86Operand) {
-    match (src, dest) {
-      (_, X86Operand::Immediate(_)) => self.instructions.push(X86Instr::Cmp(dest, src)),
-      _ => self.instructions.push(X86Instr::Cmp(src, dest)),
-    }
+    self.instructions.push(X86Instr::Cmp(src, dest));
   }
 
   /// Emit a (void or non-void) return instruction.
@@ -220,11 +217,11 @@ impl X86Context {
   /// Emit a jump if predicate holds.
   pub fn emit_jump_if(&mut self, pred: X86Operand, label_id: usize) {
     self.emit_cmp(
-      pred,
       X86Operand::Immediate(Immediate {
         value: 0,
         width: pred.width(),
       }),
+      pred,
     );
     self
       .instructions
@@ -234,11 +231,11 @@ impl X86Context {
   /// Emit a jump if predicate less than value.
   pub fn emit_trap_if_lesser(&mut self, pred: X86Operand, value: i64, trap: Trap) {
     self.emit_cmp(
-      pred,
       X86Operand::Immediate(Immediate {
         value,
         width: pred.width(),
       }),
+      pred,
     );
     self
       .instructions
@@ -248,11 +245,11 @@ impl X86Context {
   /// Emit a jump if predicate is greater than value.
   pub fn emit_trap_if_greater(&mut self, pred: X86Operand, value: i64, trap: Trap) {
     self.emit_cmp(
-      pred,
       X86Operand::Immediate(Immediate {
         value,
         width: pred.width(),
       }),
+      pred,
     );
     self
       .instructions
@@ -325,7 +322,17 @@ impl X86Context {
   pub fn emit_unary_op(&mut self, op: UnOp, dest: X86Operand) {
     match op {
       UnOp::Neg => self.instructions.push(X86Instr::Neg(dest)),
-      UnOp::Not | UnOp::LNot => self.instructions.push(X86Instr::Not(dest)),
+      UnOp::Not => self.instructions.push(X86Instr::Not(dest)),
+      UnOp::LNot => {
+        self.emit_cmp(
+          X86Operand::Immediate(Immediate {
+            value: 0,
+            width: dest.width(),
+          }),
+          dest,
+        );
+        self.instructions.push(X86Instr::Sete(dest));
+      }
     }
   }
 
