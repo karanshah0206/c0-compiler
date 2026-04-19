@@ -32,12 +32,12 @@ pub fn generate_assembly(
       .get(function_name)
       .unwrap_or_else(|| panic!("No register allocation found for function {function_name}."))
       .clone();
-    let param_types = symbol_table
+    let params_count = symbol_table
       .get_function_context(function_name)
       .get_params()
-      .clone();
+      .len();
 
-    let mut ctx = X86Context::new(coloring, param_types, format!(".L_c0_{function_name}_"));
+    let mut ctx = X86Context::new(coloring, params_count, format!(".L_c0_{function_name}_"));
 
     functions.insert(
       format!("_c0_{function_name}"),

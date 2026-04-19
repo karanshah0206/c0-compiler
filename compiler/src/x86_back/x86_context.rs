@@ -79,15 +79,13 @@ pub struct X86Context {
   stack_allocation: HashMap<usize, StackVar>,
   /// Stack depth (in bytes) added in this context.
   stack_depth: usize,
-  /// Parameter types for the function in this context.
-  param_types: Vec<Typ>,
   /// Prefix for labels created in this context.
   label_prefix: String,
 }
 
 impl X86Context {
   /// Generate a new x86-64 code generation context for a function.
-  pub fn new(regalloc: Vec<Color>, param_types: Vec<Typ>, label_prefix: String) -> Self {
+  pub fn new(regalloc: Vec<Color>, params_count: usize, label_prefix: String) -> Self {
     let mut ctx = X86Context {
       instructions: Vec::new(),
       used_callee_saved: BTreeSet::new(),
@@ -95,14 +93,14 @@ impl X86Context {
       regalloc,
       stack_allocation: HashMap::new(),
       stack_depth: 0,
-      param_types,
       label_prefix,
     };
 
-    for (id, &color) in ctx.regalloc.iter().enumerate() {
-      if color == SPILL {
+    // determine stack space for spilt temporaries
+    for (temp_id, &color) in ctx.regalloc.iter().enumerate() {
+      if color == SPILL && temp_id >= params_count {
         ctx.stack_allocation.insert(
-          id,
+          temp_id,
           StackVar {
             offset: ctx.stack_depth,
             width: W64,
@@ -110,6 +108,30 @@ impl X86Context {
         );
         ctx.stack_depth += STACK_SLOT_WIDTH;
       }
+    }
+
+    // calculate function frame size to get offsets for arguments on stack
+    let alignment = ctx.stack_depth % STACK_ALIGNMENT;
+    let frame_size = ctx.stack_depth
+      + if alignment != 8 {
+        if alignment < 8 {
+          8 - alignment
+        } else {
+          24 - alignment
+        }
+      } else {
+        0
+      };
+
+    // calculate offsets for function params on the stack
+    for (index, temp_id) in (X86Reg::call_argument().len()..params_count).enumerate() {
+      ctx.stack_allocation.insert(
+        temp_id,
+        StackVar {
+          offset: frame_size + (index + 1) * STACK_SLOT_WIDTH,
+          width: W64,
+        },
+      );
     }
 
     ctx
@@ -421,17 +443,17 @@ impl X86Context {
     self.emit_save_caller_saved(return_reg);
     self.emit_call_args_placement(&args);
     self.instructions.push(X86Instr::Call(name));
-    if let Some(dest) = dest {
-      self.emit_move(X86Operand::Register(X86WReg::ret(dest.width())), dest);
-    }
     if args.len() > 6 {
-      self.instructions.push(X86Instr::Sub(
+      self.instructions.push(X86Instr::Add(
         X86Operand::Immediate(Immediate {
           value: ((args.len() - 6) * 8) as i64,
           width: W64,
         }),
         X86Operand::Register(X86WReg::stack_pointer()),
       ));
+    }
+    if let Some(dest) = dest {
+      self.emit_move(X86Operand::Register(X86WReg::ret(dest.width())), dest);
     }
     self.emit_restore_caller_saved(return_reg);
   }
