@@ -90,15 +90,14 @@ fn generate_function(
           }
           BinOp::Sal | BinOp::Sar => {
             // generate shift validator in safe mode
-            if !allow_unsafe {
-              if let X86Operand::Immediate(imm) = rhs {
-                if imm.value < 0 || imm.value > 31 {
-                  ctx.emit_trap_jump(Trap::Sigfpe);
-                }
-              } else {
-                ctx.emit_trap_if_lesser(rhs, 0, Trap::Sigfpe);
-                ctx.emit_trap_if_greater(rhs, 31, Trap::Sigfpe);
+            if let X86Operand::Immediate(imm) = rhs {
+              if imm.value < 0 || imm.value > 31 {
+                ctx.emit_trap_jump(Trap::Sigfpe);
+                continue;
               }
+            } else if !allow_unsafe {
+              ctx.emit_trap_if_lesser(rhs, 0, Trap::Sigfpe);
+              ctx.emit_trap_if_greater(rhs, 31, Trap::Sigfpe);
             }
 
             match rhs {
