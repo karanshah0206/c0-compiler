@@ -71,6 +71,8 @@ pub struct X86Context {
   instructions: Vec<X86Instr>,
   /// Set of callee-saved registers used in this context.
   used_callee_saved: BTreeSet<X86Reg>,
+  /// Set of caller-saved registers used in this context.
+  used_caller_saved: BTreeSet<X86Reg>,
   /// Register allocation for temporaries in this context.
   regalloc: Vec<Color>,
   /// Stack allocation for operands in this context.
@@ -89,6 +91,7 @@ impl X86Context {
     let mut ctx = X86Context {
       instructions: Vec::new(),
       used_callee_saved: BTreeSet::new(),
+      used_caller_saved: BTreeSet::new(),
       regalloc,
       stack_allocation: HashMap::new(),
       stack_depth: 0,
@@ -136,6 +139,8 @@ impl X86Context {
       let register = color_to_register(color);
       if X86Reg::callee_saved().contains(&register) {
         self.used_callee_saved.insert(register);
+      } else if X86Reg::caller_saved().contains(&register) {
+        self.used_caller_saved.insert(register);
       }
       X86Operand::Register(X86WReg {
         register,
@@ -498,33 +503,29 @@ impl X86Context {
 
   /// Emit instructions to save caller-saved registers.
   fn emit_save_caller_saved(&mut self, return_reg: Option<X86Reg>) {
-    let mut caller_saved = X86Reg::caller_saved();
-    if let Some(return_reg) = return_reg {
-      caller_saved.retain(|&reg| reg != return_reg);
-    }
-    for register in caller_saved {
-      self
-        .instructions
-        .push(X86Instr::Push(X86Operand::Register(X86WReg {
-          register,
-          width: W64,
-        })));
+    for register in self.used_caller_saved.iter() {
+      if return_reg != Some(*register) {
+        self
+          .instructions
+          .push(X86Instr::Push(X86Operand::Register(X86WReg {
+            register: *register,
+            width: W64,
+          })));
+      }
     }
   }
 
   /// Emit instructions to restore caller-saved registers.
   fn emit_restore_caller_saved(&mut self, return_reg: Option<X86Reg>) {
-    let mut caller_saved = X86Reg::caller_saved();
-    if let Some(return_reg) = return_reg {
-      caller_saved.retain(|&reg| reg != return_reg);
-    }
-    for &register in caller_saved.iter().rev() {
-      self
-        .instructions
-        .push(X86Instr::Pop(X86Operand::Register(X86WReg {
-          register,
-          width: W64,
-        })))
+    for register in self.used_caller_saved.iter().rev() {
+      if return_reg != Some(*register) {
+        self
+          .instructions
+          .push(X86Instr::Pop(X86Operand::Register(X86WReg {
+            register: *register,
+            width: W64,
+          })));
+      }
     }
   }
 
