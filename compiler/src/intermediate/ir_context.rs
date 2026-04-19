@@ -622,6 +622,6 @@ impl IRContext {
     }
 
     // should never reach here if the semantic analysis and typechecker pass.
-    unreachable!("Failed to ingfer type of variable {var_id} within block label {block_label}.");
+    unreachable!("Failed to infer type of variable {var_id} within block label {block_label}.");
   }
 }
