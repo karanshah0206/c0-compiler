@@ -216,7 +216,17 @@ impl X86Context {
           dest,
         ));
       } else {
-        self.instructions.push(X86Instr::Mov(src, dest));
+        if matches!(
+          (src, dest),
+          (
+            X86Operand::Immediate(Immediate { value: 0, .. }),
+            X86Operand::Register(_)
+          )
+        ) {
+          self.emit_binary_op(BinOp::Xor, Some(dest), Some(dest));
+        } else {
+          self.instructions.push(X86Instr::Mov(src, dest));
+        }
       }
     }
   }
@@ -376,17 +386,47 @@ impl X86Context {
   /// Either of the operands may be implicit depending on the oepration.
   pub fn emit_binary_op(&mut self, op: BinOp, src: Option<X86Operand>, dest: Option<X86Operand>) {
     let op_instr = match op {
-      BinOp::Add => X86Instr::Add(src.unwrap(), dest.unwrap()),
-      BinOp::Sub => X86Instr::Sub(src.unwrap(), dest.unwrap()),
+      BinOp::Add => {
+        if !matches!(src, Some(X86Operand::Immediate(Immediate { value: 0, .. }))) {
+          X86Instr::Add(src.unwrap(), dest.unwrap())
+        } else {
+          return;
+        }
+      }
+      BinOp::Sub => {
+        if !matches!(src, Some(X86Operand::Immediate(Immediate { value: 0, .. }))) {
+          X86Instr::Sub(src.unwrap(), dest.unwrap())
+        } else {
+          return;
+        }
+      }
       BinOp::Mul => match src.unwrap() {
-        X86Operand::Immediate(_) => {
-          X86Instr::IMul(Some(src.unwrap()), dest.unwrap(), dest.unwrap())
+        X86Operand::Immediate(imm) => {
+          if matches!(imm, Immediate { value: 1, .. }) {
+            return;
+          } else if matches!(imm, Immediate { value: -1, .. }) {
+            X86Instr::Neg(dest.unwrap())
+          } else {
+            X86Instr::IMul(Some(src.unwrap()), dest.unwrap(), dest.unwrap())
+          }
         }
         _ => X86Instr::IMul(None, src.unwrap(), dest.unwrap()),
       },
       BinOp::Div | BinOp::Mod => {
         let src = src.unwrap();
-        let src = if let X86Operand::Immediate(_) = src {
+        let src = if let X86Operand::Immediate(imm) = src {
+          if matches!(imm, Immediate { value: 1, .. }) {
+            if op == BinOp::Mod {
+              self.emit_move(
+                X86Operand::Immediate(Immediate {
+                  value: 0,
+                  width: src.width(),
+                }),
+                X86Operand::Register(X86WReg::modulo(src.width())),
+              );
+            }
+            return;
+          }
           let scratch = X86Operand::Register(X86WReg::scratch(src.width()));
           self.emit_move(src, scratch);
           scratch
