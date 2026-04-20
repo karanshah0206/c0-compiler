@@ -134,6 +134,15 @@ impl X86Context {
       );
     }
 
+    // treat caller-saved argument registers are defined
+    let arg_regs = X86Reg::call_argument();
+    let caller_saved_regs = X86Reg::caller_saved();
+    for index in 0..params_count.min(arg_regs.len()) {
+      if caller_saved_regs.contains(&arg_regs[index]) {
+        ctx.used_caller_saved.insert(arg_regs[index]);
+      }
+    }
+
     ctx
   }
 
