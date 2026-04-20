@@ -440,35 +440,131 @@ impl X86Context {
       None
     };
 
-    let arg_regs_count = X86Reg::call_argument().len();
+    let arg_regs = X86Reg::call_argument();
 
-    let caller_saved_offset = self.emit_save_caller_saved(return_reg);
-    self.emit_call_args_placement(&args, caller_saved_offset);
-    self.instructions.push(X86Instr::Call(name));
-    if args.len() > arg_regs_count {
-      self.instructions.push(X86Instr::Add(
-        X86Operand::Immediate(Immediate {
-          value: ((args.len() - arg_regs_count) * STACK_SLOT_WIDTH) as i64,
+    // get caller-saved registers to save
+    let mut caller_saved = Vec::new();
+    for arg in self.used_caller_saved.iter() {
+      if return_reg != Some(*arg) {
+        caller_saved.push(*arg);
+      }
+    }
+
+    // calculate offset added to RSP in saving caller-saved and on-stack arguments
+    let caller_saved_offset = caller_saved.len() * STACK_SLOT_WIDTH;
+    let args_offset = if args.len() > arg_regs.len() {
+      (args.len() - arg_regs.len()) * STACK_SLOT_WIDTH
+    } else {
+      0
+    };
+    let call_offset = caller_saved_offset
+      + args_offset
+      + if (caller_saved_offset + args_offset) % STACK_ALIGNMENT != 0 {
+        STACK_SLOT_WIDTH
+      } else {
+        0
+      };
+
+    // allocate memory on stack for caller-saved registers and arguments
+    self.emit_binary_op(
+      BinOp::Sub,
+      Some(X86Operand::Immediate(Immediate {
+        value: call_offset as i64,
+        width: W64,
+      })),
+      Some(X86Operand::Register(X86WReg::stack_pointer())),
+    );
+
+    // save caller-saved
+    for (index, &register) in caller_saved.iter().enumerate() {
+      self.emit_move(
+        X86Operand::Register(X86WReg {
+          register,
           width: W64,
         }),
-        X86Operand::Register(X86WReg::stack_pointer()),
-      ));
+        X86Operand::Stack(StackVar {
+          offset: args_offset + index * STACK_SLOT_WIDTH,
+          width: W64,
+        }),
+      );
     }
-    if let Some(dest) = dest {
-      if let X86Operand::Stack(stack_dest) = dest {
-        // we need to account for changes to RSP in saving caller-saved regs.
+
+    // place arguments
+    for (index, &arg) in args.iter().enumerate() {
+      if index < arg_regs.len() {
         self.emit_move(
-          X86Operand::Register(X86WReg::ret(dest.width())),
-          X86Operand::Stack(StackVar {
-            offset: stack_dest.offset + caller_saved_offset,
-            width: dest.width(),
+          match arg {
+            X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
+              offset: call_offset + stack_var.offset,
+              width: arg.width(),
+            }),
+            _ => arg,
+          },
+          X86Operand::Register(X86WReg {
+            register: arg_regs[index],
+            width: arg.width(),
           }),
         );
       } else {
-        self.emit_move(X86Operand::Register(X86WReg::ret(dest.width())), dest);
+        self.emit_move(
+          match arg {
+            X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
+              offset: call_offset + stack_var.offset,
+              width: arg.width(),
+            }),
+            _ => arg,
+          },
+          X86Operand::Stack(StackVar {
+            offset: (index - arg_regs.len()) * STACK_SLOT_WIDTH,
+            width: arg.width(),
+          }),
+        )
       }
     }
-    self.emit_restore_caller_saved(return_reg);
+
+    // make the call and save the return value (if any)
+    self.instructions.push(X86Instr::Call(name));
+    if let Some(dest) = dest {
+      match dest {
+        X86Operand::Stack(stack_var) => self.emit_move(
+          X86Operand::Register(X86WReg::ret(dest.width())),
+          X86Operand::Stack(StackVar {
+            offset: stack_var.offset + call_offset,
+            width: dest.width(),
+          }),
+        ),
+        X86Operand::Register(_) => {
+          self.emit_move(X86Operand::Register(X86WReg::ret(dest.width())), dest)
+        }
+        X86Operand::Immediate(_) => {
+          unreachable!("Destination of a function return value cannot be an immediate.")
+        }
+      }
+    }
+
+    // restore caller-saved
+    for (index, &register) in caller_saved.iter().enumerate() {
+      self.emit_move(
+        X86Operand::Stack(StackVar {
+          offset: args_offset + index * STACK_SLOT_WIDTH,
+          width: W64,
+        }),
+        X86Operand::Register(X86WReg {
+          register,
+          width: W64,
+        }),
+      );
+    }
+
+    // clear stack allocation for caller-saved and arguments
+    self.emit_binary_op(
+      BinOp::Add,
+      Some(X86Operand::Immediate(Immediate {
+        value: call_offset as i64,
+        width: W64,
+      })),
+      Some(X86Operand::Register(X86WReg::stack_pointer())),
+    );
   }
 
   /// Generate final assembly for this context.
@@ -484,7 +580,8 @@ impl X86Context {
     }
 
     // Allocate and align stack slots for spilled temporaries
-    let alignment = (self.used_callee_saved.len() + self.stack_depth) % STACK_ALIGNMENT;
+    let alignment =
+      (self.used_callee_saved.len() * STACK_SLOT_WIDTH + self.stack_depth) % STACK_ALIGNMENT;
     let frame_size = self.stack_depth
       + if alignment != 8 {
         if alignment < 8 {
@@ -534,76 +631,6 @@ impl X86Context {
     assembly.push(X86Instr::Ret);
 
     assembly
-  }
-
-  /// Emit instructions to save caller-saved registers, returning the added stack offset due to registers saved.
-  fn emit_save_caller_saved(&mut self, return_reg: Option<X86Reg>) -> usize {
-    let mut saved_count = 0;
-    for register in self.used_caller_saved.iter() {
-      if return_reg != Some(*register) {
-        saved_count += 1;
-        self
-          .instructions
-          .push(X86Instr::Push(X86Operand::Register(X86WReg {
-            register: *register,
-            width: W64,
-          })));
-      }
-    }
-    saved_count * STACK_SLOT_WIDTH
-  }
-
-  /// Emit instructions to restore caller-saved registers.
-  fn emit_restore_caller_saved(&mut self, return_reg: Option<X86Reg>) {
-    for register in self.used_caller_saved.iter().rev() {
-      if return_reg != Some(*register) {
-        self
-          .instructions
-          .push(X86Instr::Pop(X86Operand::Register(X86WReg {
-            register: *register,
-            width: W64,
-          })));
-      }
-    }
-  }
-
-  /// Emit instructions to place args according to System V ABI for function calls.
-  fn emit_call_args_placement(&mut self, args: &[X86Operand], saved_count_offset: usize) {
-    let arg_regs = X86Reg::call_argument();
-
-    for (index, &register) in arg_regs.iter().enumerate() {
-      if index >= args.len() {
-        return;
-      }
-      let arg = match args[index] {
-        X86Operand::Immediate(_) | X86Operand::Register(_) => args[index],
-        X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
-          offset: stack_var.offset + saved_count_offset,
-          width: stack_var.width,
-        }),
-      };
-      let width = arg.width();
-      self.emit_move(arg, X86Operand::Register(X86WReg { register, width }));
-    }
-
-    for arg in args.iter().skip(arg_regs.len()).rev() {
-      let arg = match arg {
-        X86Operand::Register(wreg) => X86Operand::Register(X86WReg {
-          register: wreg.register,
-          width: W64,
-        }),
-        X86Operand::Immediate(imm) => X86Operand::Immediate(Immediate {
-          value: imm.value,
-          width: W64,
-        }),
-        X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
-          offset: stack_var.offset,
-          width: W64,
-        }),
-      };
-
-      self.instructions.push(X86Instr::Push(arg));
-    }
   }
 
   /// Helper to transform label index to label string.
