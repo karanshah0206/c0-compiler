@@ -77,8 +77,8 @@ pub struct X86Context {
   regalloc: Vec<Color>,
   /// Stack allocation for operands in this context.
   stack_allocation: HashMap<usize, StackVar>,
-  /// Stack depth (in bytes) added in this context.
-  stack_depth: usize,
+  /// Stack frame size (in bytes) for this context.
+  frame_size: usize,
   /// Prefix for labels created in this context.
   label_prefix: String,
 }
@@ -92,55 +92,109 @@ impl X86Context {
       used_caller_saved: BTreeSet::new(),
       regalloc,
       stack_allocation: HashMap::new(),
-      stack_depth: 0,
+      frame_size: 0,
       label_prefix,
     };
 
-    // determine stack space for spilt temporaries
-    for (temp_id, &color) in ctx.regalloc.iter().enumerate() {
-      if color == SPILL && temp_id >= params_count {
-        ctx.stack_allocation.insert(
-          temp_id,
-          StackVar {
-            offset: ctx.stack_depth,
-            width: W64,
-          },
-        );
-        ctx.stack_depth += STACK_SLOT_WIDTH;
+    let arg_regs = X86Reg::call_argument();
+    let mut stack_depth = 0;
+
+    // determine stack space for spilt temporaries excluding arguments on stack
+    for (temp_id, &allocation) in ctx.regalloc.iter().enumerate() {
+      match allocation {
+        UNCOLORED => unreachable!("Found uncolored argument temporary with id {temp_id}."),
+        SPILL => {
+          if temp_id < arg_regs.len() || temp_id >= params_count {
+            ctx.stack_allocation.insert(
+              temp_id,
+              StackVar {
+                offset: stack_depth as i64,
+                width: W64,
+              },
+            );
+            stack_depth += STACK_SLOT_WIDTH;
+          }
+        }
+        color => {
+          let register = color_to_register(color);
+          if X86Reg::callee_saved().contains(&register) {
+            ctx.used_callee_saved.insert(register);
+          }
+        }
       }
     }
 
-    // calculate function frame size to get offsets for arguments on stack
-    let alignment = ctx.stack_depth % STACK_ALIGNMENT;
-    let frame_size = ctx.stack_depth
-      + if alignment != 8 {
-        if alignment < 8 {
-          8 - alignment
-        } else {
-          24 - alignment
-        }
-      } else {
-        0
-      };
+    // determine stack frame size with alignment
+    ctx.frame_size = ctx.used_callee_saved.len() * STACK_SLOT_WIDTH + stack_depth;
+    if ctx.frame_size % STACK_ALIGNMENT == 0 {
+      ctx.frame_size += STACK_SLOT_WIDTH;
+    }
 
-    // calculate offsets for function params on the stack
+    // allocate stack frame
+    ctx.instructions.push(X86Instr::Sub(
+      X86Operand::Immediate(Immediate {
+        value: ctx.frame_size as i64,
+        width: W64,
+      }),
+      X86Operand::Register(X86WReg::stack_pointer()),
+    ));
+
+    // save callee-saved registers
+    for (index, &register) in ctx.used_callee_saved.clone().iter().enumerate() {
+      ctx.emit_move(
+        X86Operand::Register(X86WReg {
+          register,
+          width: W64,
+        }),
+        X86Operand::Stack(StackVar {
+          offset: (ctx.frame_size - ((index + 1) * STACK_SLOT_WIDTH)) as i64,
+          width: W64,
+        }),
+      );
+    }
+
+    // calculate offsets for arguments on the stack
     for (index, temp_id) in (X86Reg::call_argument().len()..params_count).enumerate() {
       ctx.stack_allocation.insert(
         temp_id,
         StackVar {
-          offset: frame_size + (index + 1) * STACK_SLOT_WIDTH,
+          offset: (ctx.frame_size + (index + 1) * STACK_SLOT_WIDTH) as i64,
           width: W64,
         },
       );
     }
 
-    // treat caller-saved argument registers are defined
-    let arg_regs = X86Reg::call_argument();
-    let caller_saved_regs = X86Reg::caller_saved();
-    for index in 0..params_count.min(arg_regs.len()) {
-      if caller_saved_regs.contains(&arg_regs[index]) {
-        ctx.used_caller_saved.insert(arg_regs[index]);
-      }
+    // move arguments temporaries to their colored destination
+    for temp_id in 0..params_count {
+      let arg_src = if temp_id < arg_regs.len() {
+        X86Operand::Register(X86WReg {
+          register: arg_regs[temp_id],
+          width: W64,
+        })
+      } else {
+        X86Operand::Stack(*ctx.stack_allocation.get(&temp_id).unwrap_or_else(|| {
+          unreachable!("Missing stack allocation for argument temporary with id {temp_id}.")
+        }))
+      };
+
+      match ctx.regalloc[temp_id] {
+        UNCOLORED => {
+          unreachable!("Found uncolored argument temporary with id {temp_id}.")
+        }
+        SPILL => ctx.emit_move(
+          arg_src,
+          X86Operand::Stack(*ctx.stack_allocation.get(&temp_id).unwrap_or_else(|| {
+            unreachable!("Missing stack allocation for argument temporary with id {temp_id}.")
+          })),
+        ),
+        register_color => ctx.emit_move(
+          arg_src,
+          X86Operand::Register(X86WReg {
+            register: color_to_register(register_color),
+            width: W64,
+          }),
+        ),
+      };
     }
 
     ctx
@@ -148,10 +202,9 @@ impl X86Context {
 
   /// Get concrete location assigned to a compile-time temporary.
   pub fn get_temp_location(&mut self, temp: Temp) -> X86Operand {
-    let color = *self
-      .regalloc
-      .get(temp.0)
-      .unwrap_or_else(|| panic!("Unknown temporary with id {} found in x86 codegen.", temp.0));
+    let color = *self.regalloc.get(temp.0).unwrap_or_else(|| {
+      unreachable!("Unknown temporary with id {} found in x86 codegen.", temp.0)
+    });
 
     if color == SPILL {
       X86Operand::Stack(
@@ -159,7 +212,7 @@ impl X86Context {
           .stack_allocation
           .get(&temp.0)
           .unwrap_or_else(|| {
-            panic!(
+            unreachable!(
               "Missing stack allocation for temporary with id {} in x86 codegen.",
               temp.0
             )
@@ -168,9 +221,7 @@ impl X86Context {
       )
     } else {
       let register = color_to_register(color);
-      if X86Reg::callee_saved().contains(&register) {
-        self.used_callee_saved.insert(register);
-      } else if X86Reg::caller_saved().contains(&register) {
+      if X86Reg::caller_saved().contains(&register) {
         self.used_caller_saved.insert(register);
       }
       X86Operand::Register(X86WReg {
@@ -274,7 +325,7 @@ impl X86Context {
       .push(X86Instr::Jne(self.format_label(label_id)));
   }
 
-  /// Emit a jump if predicate less than value.
+  /// Emit a jump to trap if predicate less than value.
   pub fn emit_trap_if_lesser(&mut self, pred: X86Operand, value: i64, trap: Trap) {
     self.emit_cmp(
       X86Operand::Immediate(Immediate {
@@ -288,7 +339,7 @@ impl X86Context {
       .push(X86Instr::Jl(trap.get_global_label()));
   }
 
-  /// Emit a jump if predicate is greater than value.
+  /// Emit a jump to trap if predicate is greater than value.
   pub fn emit_trap_if_greater(&mut self, pred: X86Operand, value: i64, trap: Trap) {
     self.emit_cmp(
       X86Operand::Immediate(Immediate {
@@ -387,17 +438,17 @@ impl X86Context {
   pub fn emit_binary_op(&mut self, op: BinOp, src: Option<X86Operand>, dest: Option<X86Operand>) {
     let op_instr = match op {
       BinOp::Add => {
-        if !matches!(src, Some(X86Operand::Immediate(Immediate { value: 0, .. }))) {
-          X86Instr::Add(src.unwrap(), dest.unwrap())
-        } else {
+        if matches!(src, Some(X86Operand::Immediate(Immediate { value: 0, .. }))) {
           return;
+        } else {
+          X86Instr::Add(src.unwrap(), dest.unwrap())
         }
       }
       BinOp::Sub => {
-        if !matches!(src, Some(X86Operand::Immediate(Immediate { value: 0, .. }))) {
-          X86Instr::Sub(src.unwrap(), dest.unwrap())
-        } else {
+        if matches!(src, Some(X86Operand::Immediate(Immediate { value: 0, .. }))) {
           return;
+        } else {
+          X86Instr::Sub(src.unwrap(), dest.unwrap())
         }
       }
       BinOp::Mul => match src.unwrap() {
@@ -532,7 +583,7 @@ impl X86Context {
           width: W64,
         }),
         X86Operand::Stack(StackVar {
-          offset: args_offset + index * STACK_SLOT_WIDTH,
+          offset: (args_offset + index * STACK_SLOT_WIDTH) as i64,
           width: W64,
         }),
       );
@@ -544,7 +595,7 @@ impl X86Context {
         self.emit_move(
           match arg {
             X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
-              offset: call_offset + stack_var.offset,
+              offset: call_offset as i64 + stack_var.offset,
               width: arg.width(),
             }),
             X86Operand::Register(wreg) => {
@@ -553,7 +604,7 @@ impl X86Context {
                 && reg_index != index
               {
                 X86Operand::Stack(StackVar {
-                  offset: args_offset + reg_index * STACK_SLOT_WIDTH,
+                  offset: (args_offset + reg_index * STACK_SLOT_WIDTH) as i64,
                   width: arg.width(),
                 })
               } else {
@@ -571,13 +622,13 @@ impl X86Context {
         self.emit_move(
           match arg {
             X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
-              offset: call_offset + stack_var.offset,
+              offset: call_offset as i64 + stack_var.offset,
               width: arg.width(),
             }),
             _ => arg,
           },
           X86Operand::Stack(StackVar {
-            offset: (index - arg_regs.len()) * STACK_SLOT_WIDTH,
+            offset: ((index - arg_regs.len()) * STACK_SLOT_WIDTH) as i64,
             width: arg.width(),
           }),
         )
@@ -591,7 +642,7 @@ impl X86Context {
         X86Operand::Stack(stack_var) => self.emit_move(
           X86Operand::Register(X86WReg::ret(dest.width())),
           X86Operand::Stack(StackVar {
-            offset: stack_var.offset + call_offset,
+            offset: stack_var.offset + call_offset as i64,
             width: dest.width(),
           }),
         ),
@@ -608,7 +659,7 @@ impl X86Context {
     for (index, &register) in caller_saved.iter().enumerate() {
       self.emit_move(
         X86Operand::Stack(StackVar {
-          offset: args_offset + index * STACK_SLOT_WIDTH,
+          offset: (args_offset + index * STACK_SLOT_WIDTH) as i64,
           width: W64,
         }),
         X86Operand::Register(X86WReg {
@@ -633,63 +684,38 @@ impl X86Context {
   pub fn assemble(&mut self) -> Vec<X86Instr> {
     let mut assembly: Vec<X86Instr> = Vec::new();
 
-    // Save callee-saved registers
-    for &register in self.used_callee_saved.iter() {
-      assembly.push(X86Instr::Push(X86Operand::Register(X86WReg {
-        register,
-        width: W64,
-      })));
-    }
-
-    // Allocate and align stack slots for spilled temporaries
-    let alignment =
-      (self.used_callee_saved.len() * STACK_SLOT_WIDTH + self.stack_depth) % STACK_ALIGNMENT;
-    let frame_size = self.stack_depth
-      + if alignment != 8 {
-        if alignment < 8 {
-          8 - alignment
-        } else {
-          24 - alignment
-        }
-      } else {
-        0
-      };
-    if frame_size > 0 {
-      assembly.push(X86Instr::Sub(
-        X86Operand::Immediate(Immediate {
-          value: frame_size as i64,
-          width: W64,
-        }),
-        X86Operand::Register(X86WReg::stack_pointer()),
-      ));
-    }
-
-    // Append program body
+    // append program prologue and body
     assembly.append(&mut self.instructions);
 
-    // Add exit label
+    // add exit label
     assembly.push(X86Instr::Label(format!("{}exit", self.label_prefix)));
 
-    // Deallocate stack space
-    if frame_size > 0 {
+    // deallocate stack space
+    if self.frame_size > 0 {
       assembly.push(X86Instr::Add(
         X86Operand::Immediate(Immediate {
-          value: frame_size as i64,
+          value: self.frame_size as i64,
           width: W64,
         }),
         X86Operand::Register(X86WReg::stack_pointer()),
       ));
     }
 
-    // Restore callee-saved registers
-    for &register in self.used_callee_saved.iter().rev() {
-      assembly.push(X86Instr::Pop(X86Operand::Register(X86WReg {
-        register,
-        width: W64,
-      })));
+    // restore callee-saved registers
+    for (index, &register) in self.used_callee_saved.iter().enumerate() {
+      assembly.push(X86Instr::Mov(
+        X86Operand::Stack(StackVar {
+          offset: -1 * ((index + 1) * STACK_SLOT_WIDTH) as i64,
+          width: W64,
+        }),
+        X86Operand::Register(X86WReg {
+          register,
+          width: W64,
+        }),
+      ));
     }
 
-    // Add the return instruction
+    // add the return instruction
     assembly.push(X86Instr::Ret);
 
     assembly
