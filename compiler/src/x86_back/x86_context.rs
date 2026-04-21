@@ -547,7 +547,20 @@ impl X86Context {
               offset: call_offset + stack_var.offset,
               width: arg.width(),
             }),
-            _ => arg,
+            X86Operand::Register(wreg) => {
+              // check need for potential parallel move resolution
+              if let Some(reg_index) = caller_saved.iter().position(|&reg| reg == wreg.register)
+                && reg_index != index
+              {
+                X86Operand::Stack(StackVar {
+                  offset: args_offset + reg_index * STACK_SLOT_WIDTH,
+                  width: arg.width(),
+                })
+              } else {
+                arg
+              }
+            }
+            X86Operand::Immediate(_) => arg,
           },
           X86Operand::Register(X86WReg {
             register: arg_regs[index],
