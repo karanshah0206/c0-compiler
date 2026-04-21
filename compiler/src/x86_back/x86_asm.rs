@@ -53,6 +53,7 @@ pub enum Width {
   /// 8-bit operand
   W8,
   /// 16-bit operand
+  #[allow(unused)]
   W16,
   /// 32-bit operand
   W32,
@@ -133,7 +134,7 @@ pub struct Immediate {
 #[derive(Clone, Copy, PartialEq)]
 pub struct StackVar {
   /// Offset from stack pointer.
-  pub offset: usize,
+  pub offset: i64,
   /// Temporary width.
   pub width: Width,
 }

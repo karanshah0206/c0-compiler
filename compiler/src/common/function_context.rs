@@ -46,7 +46,7 @@ impl FunctionContext {
       .variables
       .get(id)
       .map(|ctx| ctx.typ.clone())
-      .unwrap_or_else(|| panic!("Unknown variable {id}."))
+      .unwrap_or_else(|| unreachable!("Unknown variable {id}."))
   }
 
   /// Check if a variable is declared in the currently active scopes.

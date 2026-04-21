@@ -33,7 +33,7 @@ impl SymbolTable {
     if let Typedef(id) = typ
       && self.is_function(id)
     {
-      panic!("Cannot typedef with {id} as it is a function identifier.");
+      unreachable!("Cannot typedef with {id} as it is a function identifier.");
     }
 
     let typ = self.resolve_type(typ.clone());
@@ -135,7 +135,7 @@ impl SymbolTable {
           self.typ.insert(id, underlying.clone());
           underlying
         } else {
-          panic!("Unknown identifier {id}");
+          unreachable!("Unknown identifier {id}");
         }
       }
       _ => typ,
@@ -158,7 +158,7 @@ impl SymbolTable {
     self
       .function_context
       .get(id)
-      .unwrap_or_else(|| panic!("Unknown function {id}."))
+      .unwrap_or_else(|| unreachable!("Unknown function {id}."))
   }
 
   /// Get a mutable function context by function name.
@@ -166,7 +166,7 @@ impl SymbolTable {
     self
       .function_context
       .get_mut(id)
-      .unwrap_or_else(|| panic!("Unknown function {id}."))
+      .unwrap_or_else(|| unreachable!("Unknown function {id}."))
   }
 
   /// Check whether an identifier is a type alias.

@@ -126,7 +126,7 @@ impl X86Context {
 
     // determine stack frame size with alignment
     ctx.frame_size = ctx.used_callee_saved.len() * STACK_SLOT_WIDTH + stack_depth;
-    if ctx.frame_size % STACK_ALIGNMENT == 0 {
+    if ctx.frame_size.is_multiple_of(STACK_ALIGNMENT) {
       ctx.frame_size += STACK_SLOT_WIDTH;
     }
 
@@ -559,7 +559,7 @@ impl X86Context {
     };
     let call_offset = caller_saved_offset
       + args_offset
-      + if (caller_saved_offset + args_offset) % STACK_ALIGNMENT != 0 {
+      + if !(caller_saved_offset + args_offset).is_multiple_of(STACK_ALIGNMENT) {
         STACK_SLOT_WIDTH
       } else {
         0
@@ -705,7 +705,7 @@ impl X86Context {
     for (index, &register) in self.used_callee_saved.iter().enumerate() {
       assembly.push(X86Instr::Mov(
         X86Operand::Stack(StackVar {
-          offset: -1 * ((index + 1) * STACK_SLOT_WIDTH) as i64,
+          offset: -(((index + 1) * STACK_SLOT_WIDTH) as i64),
           width: W64,
         }),
         X86Operand::Register(X86WReg {

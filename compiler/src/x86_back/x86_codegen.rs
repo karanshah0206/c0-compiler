@@ -30,7 +30,7 @@ pub fn generate_assembly(
   for (function_name, ir_context) in program {
     let coloring = regalloc
       .get(function_name)
-      .unwrap_or_else(|| panic!("No register allocation found for function {function_name}."))
+      .unwrap_or_else(|| unreachable!("No register allocation found for function {function_name}."))
       .clone();
     let params_count = symbol_table
       .get_function_context(function_name)

@@ -374,7 +374,7 @@ impl IRContext {
         .blocks
         .get_mut(&pred_label)
         .unwrap_or_else(|| {
-          panic!("Unknown block with label {pred_label} found in SSA deconstruction.")
+          unreachable!("Unknown block with label {pred_label} found in SSA deconstruction.")
         })
         .add_moves_for_phi(moves_by_label);
     }

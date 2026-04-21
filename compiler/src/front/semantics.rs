@@ -14,7 +14,7 @@ pub fn analyze_program(header_ast: &mut ProgramAST, source_ast: &mut ProgramAST)
     match declaration {
       Typedef(typ, id) => symbol_table.add_typedef(id, typ),
       FDecl(typ, id, params) => symbol_table.declare_function(id, typ, params, true),
-      FDefn(_, _, _, _) => panic!("Function definitions are illegal in a header file."),
+      FDefn(_, _, _, _) => unreachable!("Function definitions are illegal in a header file."),
     }
   }
 
@@ -360,7 +360,7 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       let (typ, _) = st
         .get_function_signature(id)
-        .unwrap_or_else(|| panic!("Unknown function {id}."));
+        .unwrap_or_else(|| unreachable!("Unknown function {id}."));
 
       match expr {
         Some(expr) => {
@@ -522,7 +522,7 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
 
       let (ret_typ, params) = st
         .get_function_signature(func_id)
-        .unwrap_or_else(|| panic!("Call to unknown function {func_id}"));
+        .unwrap_or_else(|| unreachable!("Call to unknown function {func_id}"));
 
       assert!(
         !st.get_mut_function_context(id).is_var_declared(func_id),
