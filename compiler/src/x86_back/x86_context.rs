@@ -457,6 +457,9 @@ impl X86Context {
             return;
           } else if matches!(imm, Immediate { value: -1, .. }) {
             X86Instr::Neg(dest.unwrap())
+          } else if matches!(imm, Immediate { value: 0, .. }) {
+            self.emit_move(src.unwrap(), dest.unwrap());
+            return;
           } else {
             X86Instr::IMul(Some(src.unwrap()), dest.unwrap(), dest.unwrap())
           }
