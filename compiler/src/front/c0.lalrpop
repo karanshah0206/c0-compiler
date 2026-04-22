@@ -166,10 +166,10 @@ Type : Typ = {
     let mut out = p;
     for is_pointer in s {
       out = if is_pointer {
-        if let Typ::Ptr(ptr_val, depth) = out {
-          Typ::Ptr(ptr_val, depth + 1)
+        if let Typ::Pointer(ptr_val, depth) = out {
+          Typ::Pointer(ptr_val, depth + 1)
         } else {
-          Typ::Ptr(Box::new(out), 1)
+          Typ::Pointer(Box::new(out), 1)
         }
       } else {
         if let Typ::Array(array_val, depth) = out {
@@ -194,14 +194,14 @@ DeclType : Typ = {
     let mut out = t;
     for is_pointer in s {
       out = if is_pointer {
-        if let Typ::Ptr(ptr_val, depth) = out {
-          Typ::Ptr(ptr_val, depth + 1)
+        if let Typ::Pointer(ptr_val, depth) = out {
+          Typ::Pointer(ptr_val, depth + 1)
         } else {
-          Typ::Ptr(Box::new(out), 1)
+          Typ::Pointer(Box::new(out), 1)
         }
       } else {
         if let Typ::Array(array_val, depth) = out {
-          Typ::Array(array_val, depth = 1)
+          Typ::Array(array_val, depth + 1)
         } else {
           Typ::Array(Box::new(out), 1)
         }
@@ -209,18 +209,18 @@ DeclType : Typ = {
     }
     out
   },
-  <i : Ident> <a : ArraySuffix> <s : SuffixType*> => {
+  <i : Ident> <_a : ArraySuffix> <s : SuffixType*> => {
     let mut out = Typ::Array(Box::new(Typ::Typedef(i)), 1);
     for is_pointer in s {
       out = if is_pointer {
-        if let Typ::Ptr(ptr_val, depth) = out {
-          Typ::Ptr(ptr_val, depth + 1)
+        if let Typ::Pointer(ptr_val, depth) = out {
+          Typ::Pointer(ptr_val, depth + 1)
         } else {
-          Typ::Ptr(Box::new(out), 1)
+          Typ::Pointer(Box::new(out), 1)
         }
       } else {
         if let Typ::Array(array_val, depth) = out {
-          Typ::Array(array_val, depth = 1)
+          Typ::Array(array_val, depth + 1)
         } else {
           Typ::Array(Box::new(out), 1)
         }
@@ -228,18 +228,18 @@ DeclType : Typ = {
     }
     out
   },
-  <p : PointeryDecl> <a : ArraySuffix> <s : SuffixType*> => {
-    let mut out = Typ::Array(Box::new(Typ::Ptr(Box::new(Typ::Typedef(p.0)), p.1)), 1);
+  <p : PointeryDecl> <_a : ArraySuffix> <s : SuffixType*> => {
+    let mut out = Typ::Array(Box::new(Typ::Pointer(Box::new(Typ::Typedef(p.0)), p.1)), 1);
     for is_pointer in s {
       out = if is_pointer {
-        if let Typ::Ptr(ptr_val, depth) = out {
-          Typ::Ptr(ptr_val, depth + 1)
+        if let Typ::Pointer(ptr_val, depth) = out {
+          Typ::Pointer(ptr_val, depth + 1)
         } else {
-          Typ::Ptr(Box::new(out), 1)
+          Typ::Pointer(Box::new(out), 1)
         }
       } else {
         if let Typ::Array(array_val, depth) = out {
-          Typ::Array(array_val, depth = 1)
+          Typ::Array(array_val, depth + 1)
         } else {
           Typ::Array(Box::new(out), 1)
         }
@@ -480,8 +480,8 @@ PostfixNoIdent : Expr = {
 };
 PostfixBase : Expr = {
   <b : Postfix> "[" <e : Expr> "]" => Expr::ArrayIndex(Box::new(b), Box::new(e), None),
-  <b : Postfix> "->" <i : Ident> => Expr::FieldDeref(Box::new(Expr::Deref(Box::new(b), 1, None)), i, None),
-  <b : Postfix> "." <i : Ident> => Expr::FieldDeref(Box::new(b), i, None),
+  <b : Postfix> "->" <i : Ident> => Expr::StructDeref(Box::new(Expr::Deref(Box::new(b), 1, None)), i, None),
+  <b : Postfix> "." <i : Ident> => Expr::StructDeref(Box::new(b), i, None),
 };
 
 /// Leaves in an expression

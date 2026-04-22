@@ -12,9 +12,21 @@ pub type Variable = (Typ, Ident);
 /// Primitive types and typedefs.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Typ {
+  /// Sentinel type of no width
   Void,
+  /// Sentinel type for null pointer
+  Null,
+  /// 32-bit signed integer
   Int,
+  /// 8-bit boolean
   Bool,
+  /// Ordered set of field variables (identifier)
+  Struct(Ident),
+  /// Contiguous sized memory block (type, dimensions)
+  Array(Box<Typ>, usize),
+  /// Memory address (type, dimensions)
+  Pointer(Box<Typ>, usize),
+  /// Transparent type alias (identifier)
   Typedef(Ident),
 }
 
@@ -24,8 +36,12 @@ pub enum GlobalDeclaration {
   FDecl(Typ, Ident, Vec<Variable>),
   /// Function definition (type, identifier, parameters, body)
   FDefn(Typ, Ident, Vec<Variable>, Stmt),
+  /// Struct declaration (identifier)
+  SDecl(Ident),
+  /// Struct definition (identifier, field variables)
+  SDefn(Ident, Vec<Variable>),
   /// Type definition (underlying type, alias)
-  Typedef(Typ, Ident),
+  TDefn(Typ, Ident),
 }
 
 /// Local statement.
@@ -35,9 +51,7 @@ pub enum Stmt {
   /// Variable definition
   Defn(Variable, Expr),
   /// Variable assignment
-  Asgn(Ident, AsnOp, Expr),
-  /// Post-operator (++/--
-  PostOp(Ident, PostOp),
+  Asgn(Expr, AsnOp, Expr),
   /// Conditional (bool expression, if-branch, else-branch)
   Cond(Expr, Box<Stmt>, Box<Stmt>),
   /// While loop (bool expression, loop body)
@@ -64,6 +78,8 @@ pub enum Expr {
   Number(i64),
   /// Boolean immediate
   Bool(bool),
+  /// Null-pointer
+  Null,
   /// Variable identifier
   Variable(Ident, Option<Typ>),
   /// Binary operation (lhs, operator, rhs, type)
@@ -74,6 +90,16 @@ pub enum Expr {
   Ternop(Box<Expr>, Box<Expr>, Box<Expr>, Option<Typ>),
   /// Function call (identifier, arguments list, type)
   Call(Ident, Vec<Expr>, Option<Typ>),
+  /// Pointer dereference (source, dimension, type)
+  Deref(Box<Expr>, usize, Option<Typ>),
+  /// Fetch from array at index (source, index, type)
+  ArrayIndex(Box<Expr>, Box<Expr>, Option<Typ>),
+  /// Dereference field of a struct (source, field variable)
+  StructDeref(Box<Expr>, Ident, Option<Typ>),
+  /// Allocate heap memory for a pointer (data type, pointer type)
+  Alloc(Typ, Option<Typ>),
+  /// Allocate heap memory for an array (data type, size, array type)
+  AllocArray(Typ, Box<Expr>, Option<Typ>),
 }
 
 impl Expr {
@@ -84,11 +110,17 @@ impl Expr {
     match self {
       Number(_) => Typ::Int,
       Bool(_) => Typ::Bool,
+      Null => Typ::Null,
       Variable(_, typ)
       | Binop(_, _, _, typ)
       | Unop(_, _, typ)
       | Ternop(_, _, _, typ)
-      | Call(_, _, typ) => typ.clone().unwrap_or(Typ::Void),
+      | Call(_, _, typ)
+      | Deref(_, _, typ)
+      | ArrayIndex(_, _, typ)
+      | StructDeref(_, _, typ)
+      | Alloc(_, typ)
+      | AllocArray(_, _, typ) => typ.clone().unwrap_or(Typ::Void),
     }
   }
 }
@@ -219,7 +251,6 @@ impl AsnOp {
 impl Display for GlobalDeclaration {
   fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
     match self {
-      GlobalDeclaration::FDecl(_, _, _) | GlobalDeclaration::Typedef(_, _) => write!(fmt, ""),
       GlobalDeclaration::FDefn(typ, id, params, body) => {
         let params = params
           .iter()
@@ -233,6 +264,17 @@ impl Display for GlobalDeclaration {
           write!(fmt, "{typ} {id}({params}):\n{body}")
         }
       }
+      GlobalDeclaration::SDefn(id, fields) => {
+        let fields = fields
+          .iter()
+          .map(|(field_typ, field_id)| format!("{field_typ} {field_id};"))
+          .collect::<Vec<_>>()
+          .join(", ");
+        write!(fmt, "struct {id} {{{fields}}}")
+      }
+      GlobalDeclaration::SDecl(_)
+      | GlobalDeclaration::FDecl(_, _, _)
+      | GlobalDeclaration::TDefn(_, _) => write!(fmt, ""),
     }
   }
 }
@@ -245,6 +287,22 @@ impl Display for Typ {
       Void => write!(fmt, "void"),
       Int => write!(fmt, "int"),
       Bool => write!(fmt, "bool"),
+      Null => write!(fmt, "NULL"),
+      Struct(id) => write!(fmt, "struct {id}"),
+      Array(typ, dimensions) => {
+        write!(fmt, "{typ}")?;
+        for _ in 1..*dimensions {
+          write!(fmt, "[]")?;
+        }
+        write!(fmt, "[]")
+      }
+      Pointer(typ, depth) => {
+        write!(fmt, "{typ}")?;
+        for _ in 1..*depth {
+          write!(fmt, "*")?;
+        }
+        write!(fmt, "*")
+      }
       Typedef(id) => write!(fmt, "{id}"),
     }
   }
@@ -263,7 +321,6 @@ impl Display for Stmt {
       Stmt::Decl((typ, id)) => write!(fmt, "Decl({typ}, \"{id}\")"),
       Stmt::Defn((typ, id), expr) => write!(fmt, "Defn({typ}, \"{id}\", {expr})"),
       Stmt::Asgn(id, asn_op, expr) => write!(fmt, "Asgn(\"{id}\", {asn_op}, {expr})"),
-      Stmt::PostOp(id, post_op) => write!(fmt, "PostOp(\"{id}\", {post_op})"),
       Stmt::Cond(expr, stmt, stmt1) => write!(fmt, "Cond({expr}, {stmt}, {stmt1})"),
       Stmt::While(expr, stmt) => write!(fmt, "While({expr}, {stmt})"),
       Stmt::For(stmt, expr, stmt1, stmt2) => {
@@ -305,6 +362,7 @@ impl Display for Expr {
     match self {
       Expr::Number(value) => write!(fmt, "Number({value})"),
       Expr::Bool(value) => write!(fmt, "Bool({value})"),
+      Expr::Null => write!(fmt, "NULL"),
       Expr::Variable(id, typ) => write!(fmt, "Variable(\"{id}\", {})", fmt_opt_typ(typ)),
       Expr::Binop(lhs, op, rhs, typ) => {
         write!(fmt, "Binop({lhs}, {op}, {rhs}, {})", fmt_opt_typ(typ))
@@ -328,6 +386,21 @@ impl Display for Expr {
           "Call(\"{id}\", [{rendered_args}], {})",
           fmt_opt_typ(typ)
         )
+      }
+      Expr::Deref(src, dimensions, typ) => {
+        write!(fmt, "Deref({src}, {dimensions}, {})", fmt_opt_typ(typ))
+      }
+      Expr::StructDeref(src, f_id, f_typ) => {
+        write!(fmt, "StructDeref({src}, {f_id}, {})", fmt_opt_typ(f_typ))
+      }
+      Expr::ArrayIndex(src, index, typ) => {
+        write!(fmt, "ArrayIndex({src}, {index}, {})", fmt_opt_typ(typ))
+      }
+      Expr::Alloc(alloc_typ, typ) => {
+        write!(fmt, "Alloc({alloc_typ}, {})", fmt_opt_typ(typ))
+      }
+      Expr::AllocArray(alloc_typ, size, typ) => {
+        write!(fmt, "AllocArray({alloc_typ}, {size}, {})", fmt_opt_typ(typ))
       }
     }
   }
