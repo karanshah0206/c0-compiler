@@ -14,6 +14,13 @@ pub enum Token<'a> {
   LBrace,
   #[token("}")]
   RBrace,
+  #[token("[")]
+  LBracket,
+  #[token("]")]
+  RBracket,
+  #[regex(r"\[\s*\]")]
+  #[regex(r"\[(\s*(//)[^\n]*\s*)+\]")]
+  LBracketRBracket,
 
   #[token("~")]
   Tilde,
@@ -25,6 +32,11 @@ pub enum Token<'a> {
   Semicolon,
   #[token("?")]
   Question,
+
+  #[token(".")]
+  Period,
+  #[token("->")]
+  Arrow,
 
   #[token("=")]
   Equal,
@@ -123,6 +135,13 @@ pub enum Token<'a> {
   Void,
   #[token("typedef")]
   Typedef,
+  #[token("struct")]
+  Struct,
+
+  #[token("alloc")]
+  Alloc,
+  #[token("alloc_array")]
+  AllocArray,
 
   #[regex("[A-Za-z_][A-Za-z0-9_]*")]
   Ident(&'a str),
@@ -143,6 +162,8 @@ pub enum Token<'a> {
   True,
   #[token("false")]
   False,
+  #[token("NULL")]
+  Null,
 
   #[regex(r"//[^\n]*", logos::skip, allow_greedy = true)]
   #[token("/*", skip_block_comment)]
@@ -153,10 +174,6 @@ pub enum Token<'a> {
   #[token("continue")]
   #[token("char")]
   #[token("string")]
-  #[token("alloc")]
-  #[token("alloc_array")]
-  #[token("NULL")]
-  #[token("struct")]
   Error,
 }
 

@@ -13,7 +13,10 @@ extern {
     "}" => Token::RBrace,
     "(" => Token::LParen,
     ")" => Token::RParen,
+    "[" => Token::LBracket,
+    "]" => Token::RBracket,
     ";" => Token::Semicolon,
+    "." => Token::Period,
     "," => Token::Comma,
     ":" => Token::Colon,
     "?" => Token::Question,
@@ -49,6 +52,8 @@ extern {
     "!=" => Token::BangEqual,
     "<=" => Token::LtEqual,
     ">=" => Token::GtEqual,
+    "->" => Token::Arrow,
+    "[]" => Token::LBracketRBracket,
 
     "<<=" => Token::LtLtEqual,
     ">>=" => Token::GtGtEqual,
@@ -57,11 +62,16 @@ extern {
     "false" => Token::False,
     "number" => Token::Number(<i64>),
     "ident" => Token::Ident(<&'input str>),
+    "null" => Token::Null,
 
     "void" => Token::Void,
     "int" => Token::Int,
     "bool" => Token::Bool,
     "typedef" => Token::Typedef,
+    "struct" => Token::Struct,
+
+    "alloc" => Token::Alloc,
+    "alloc_array" => Token::AllocArray,
 
     "if" => Token::If,
     "else" => Token::Else,
@@ -74,37 +84,169 @@ extern {
 
 /// The program is a collection of global declarations
 pub Program : ProgramAST = {
-  <g : GDecl*> => g,
+  <GDecl*> => <>,
 };
 
 /// Global declarations
 GDecl : GlobalDeclaration = {
-  <g : FDecl> => <>,
-  <g : FDefn> => <>,
-  <g : Typedef> => <>,
+  // functions
+  <FDecl> => <>,
+  <FDefn> => <>,
+  // structs
+  <SDecl> => <>,
+  <SDefn> => <>,
+  // typedefs
+  <TDefn> => <>,
 };
 
 /// Function declaration
 FDecl : GlobalDeclaration = {
-  <t : Type> <i : Ident> <p : ParamList> ";" => GlobalDeclaration::FDecl(t, i, p),
+  <t : ReturnType> <i : Ident> <p : ParamList> ";" => GlobalDeclaration::FDecl(t, i, p),
 };
 
 /// Function definition
 FDefn : GlobalDeclaration = {
-  <t : Type> <i : Ident> <p : ParamList> <b : Block> => GlobalDeclaration::FDefn(t, i, p, b),
+  <t : ReturnType> <i : Ident> <p : ParamList> <b : Block> => GlobalDeclaration::FDefn(t, i, p, b),
+};
+
+/// Struct declaration
+SDecl : GlobalDeclaration = {
+  "struct" <i : Ident> ";" => GlobalDeclaration::SDecl(i),
+};
+
+/// Struct definition
+SDefn : GlobalDeclaration = {
+  "struct" <i : Ident> "{" <f : SField*> "}" ";" => GlobalDeclaration::SDefn(i, f),
+};
+
+/// Struct field variables
+SField : Variable = {
+  <t : Type> <i : Ident> ";" => (t, i),
 };
 
 /// Type definition
-Typedef : GlobalDeclaration = {
-  "typedef" <t : Type> <i : Ident> ";" => GlobalDeclaration::Typedef(t, i),
+TDefn : GlobalDeclaration = {
+  "typedef" <t : Type> <i : Ident> ";" => GlobalDeclaration::TDefn(t, i),
 };
 
-/// Types
-Type : Typ = {
-  "void" => Typ::Void,
+/// Fundamental non-void supported C0 types
+BaseType : Typ = {
   "int" => Typ::Int,
   "bool" => Typ::Bool,
+  "struct" <i : Ident> => Typ::Struct(i),
+};
+
+/// Types that can be prefixes for pointers/arrays
+PrefixType : Typ = {
+  <BaseType> => <>,
   <i : Ident> => Typ::Typedef(i),
+};
+
+/// Pointer/array suffixes on base types
+SuffixType : bool = {
+  <PointerSuffix> => true,
+  <ArraySuffix> => false,
+};
+PointerSuffix : () = {
+  "*" => (),
+};
+ArraySuffix : () = {
+  "[]" => (),
+};
+
+/// Function return types
+ReturnType : Typ = {
+  "void" => Typ::Void,
+  <Type> => <>,
+};
+
+/// Non-void types
+Type : Typ = {
+  <p : PrefixType> <s : SuffixType*> => {
+    let mut out = p;
+    for is_pointer in s {
+      out = if is_pointer {
+        if let Typ::Ptr(ptr_val, depth) = out {
+          Typ::Ptr(ptr_val, depth + 1)
+        } else {
+          Typ::Ptr(Box::new(out), 1)
+        }
+      } else {
+        if let Typ::Array(array_val, depth) = out {
+          Typ::Array(array_val, depth + 1)
+        } else {
+          Typ::Array(Box::new(out), 1)
+        }
+      };
+    }
+    out
+  },
+};
+
+/// Grammar that is ambiguous for pointer or multiply
+PointeryDecl : (Ident, usize) = {
+  <i : Ident> <s : PointerSuffix+> => (i, s.len()),
+};
+
+/// Types used within declaration statements
+DeclType : Typ = {
+  <t : BaseType> <s : SuffixType*> => {
+    let mut out = t;
+    for is_pointer in s {
+      out = if is_pointer {
+        if let Typ::Ptr(ptr_val, depth) = out {
+          Typ::Ptr(ptr_val, depth + 1)
+        } else {
+          Typ::Ptr(Box::new(out), 1)
+        }
+      } else {
+        if let Typ::Array(array_val, depth) = out {
+          Typ::Array(array_val, depth = 1)
+        } else {
+          Typ::Array(Box::new(out), 1)
+        }
+      };
+    }
+    out
+  },
+  <i : Ident> <a : ArraySuffix> <s : SuffixType*> => {
+    let mut out = Typ::Array(Box::new(Typ::Typedef(i)), 1);
+    for is_pointer in s {
+      out = if is_pointer {
+        if let Typ::Ptr(ptr_val, depth) = out {
+          Typ::Ptr(ptr_val, depth + 1)
+        } else {
+          Typ::Ptr(Box::new(out), 1)
+        }
+      } else {
+        if let Typ::Array(array_val, depth) = out {
+          Typ::Array(array_val, depth = 1)
+        } else {
+          Typ::Array(Box::new(out), 1)
+        }
+      };
+    }
+    out
+  },
+  <p : PointeryDecl> <a : ArraySuffix> <s : SuffixType*> => {
+    let mut out = Typ::Array(Box::new(Typ::Ptr(Box::new(Typ::Typedef(p.0)), p.1)), 1);
+    for is_pointer in s {
+      out = if is_pointer {
+        if let Typ::Ptr(ptr_val, depth) = out {
+          Typ::Ptr(ptr_val, depth + 1)
+        } else {
+          Typ::Ptr(Box::new(out), 1)
+        }
+      } else {
+        if let Typ::Array(array_val, depth) = out {
+          Typ::Array(array_val, depth = 1)
+        } else {
+          Typ::Array(Box::new(out), 1)
+        }
+      };
+    }
+    out
+  },
 };
 
 /// Numeric immediate
@@ -136,19 +278,19 @@ Param : Variable = {
 
 /// Function parameter following a previous one
 ParamFollow : Variable = {
-  "," <p : Param> => p,
+  "," <Param> => <>,
 };
 
 /// Statement
 Stmt : Stmt = {
-  <s : Matched> => <>,
-  <s : Unmatched> => <>,
+  <Matched> => <>,
+  <Unmatched> => <>,
 };
 
 /// Statements that don't suffer from dangling else
 Matched : Stmt = {
-  <s : Simp> ";" => <>,
-  <b : Block> => <>,
+  <Simp> ";" => <>,
+  <Block> => <>,
   "while" "(" <e : Expr> ")" <m : Matched> => Stmt::While(e, Box::new(m)),
   "for" "(" <i : Simp?> ";" <e : Expr> ";" <s : SimpNoDecl?> ")" <m : Matched> => Stmt::For(Box::new(i), e, Box::new(s), Box::new(m)),
   "return" <e : Expr?> ";" => Stmt::Ret(e),
@@ -171,240 +313,255 @@ Block : Stmt = {
 
 /// New variable declaration
 Decl : Stmt = {
-  <t : Type> <i : Ident> => Stmt::Decl((t, i)),
-  <t : Type> <i : Ident> "=" <e : Expr> => Stmt::Defn((t, i), e),
+  <t : DeclType> <i : Ident> => Stmt::Decl((t, i)),
+  <t : DeclType> <i : Ident> "=" <e : Expr> => Stmt::Defn((t, i), e),
+  <t : Ident> <i : Ident> => Stmt::Decl((Typ::Typedef(t), i)),
+  <t : Ident> <i : Ident> "-" <e : Expr> => Stmt::Defn((Typ::Typedef(t), i), e),
 };
 
 /// Simple statements
 Simp : Stmt = {
-  <s : SimpNoDecl> => <>,
-  <d : Decl> => <>,
+  <Decl> => <>,
+  <SimpNoDecl> => <>,
 };
 
 /// Simple statements that don't result in new variable declarations
 SimpNoDecl : Stmt = {
-  <l : Expr> <o : AsnOp> <e : Expr> =>? match l {
-    Expr::Variable(v, _) => Ok(Stmt::Asgn(v, o, e)),
-    _ => Err(ParseError::User { error: "Invalid l-value in assignment" }),
+  <l : Postfix> <o : PostOp> => match o {
+    PostOp::Inc => Stmt::Asgn(l, AsnOp::Plus, Expr::Number(1)),
+    PostOp::Dec => Stmt::Asgn(l, AsnOp::Minus, Expr::Number(1)),
   },
-  <l : Expr> <o : PostOp> =>? match l {
-    Expr::Variable(v, _) => Ok(Stmt::PostOp(v, o)),
-    _ => Err(ParseError::User { error: "Invalid l-value in post-op" }),
-  },
+  <l : Expr> <o : AsnOp> <e : Expr> => Stmt::Asgn(l, o, e),
   <e : Expr> => Stmt::Expr(e),
 };
 
-// ############### Expressions ###############
-Expr: Expr = {
-  <c:LOr> "?" <i:Expr> ":" <e:Expr> => Expr::Ternop(Box::new(c), Box::new(i), Box::new(e), None),
-  <e:LOr> => e,
-}
-
-// Expression over a logical OR
-LOr: Expr = {
-  <l:LAnd> <rest:(LOrOp LAnd)*> => {
+/// Expressions chained to preserve operations priority order
+Expr : Expr = {
+  <c : LOr> "?" <i : Expr> ":" <e : Expr> => Expr::Ternop(Box::new(c), Box::new(i), Box::new(e), None),
+  <LOr> => <>,
+};
+LOr : Expr = {
+  <l : LAnd> <rest : (LOrOp LAnd)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over a logical AND
-LAnd: Expr = {
-  <l:BOr> <rest:(LAndOp BOr)*> => {
+};
+LAnd : Expr = {
+  <l : BOr> <rest : (LAndOp BOr)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over a bitwise OR
-BOr: Expr = {
-  <l:BXor> <rest:(BOrOp BXor)*> => {
+};
+BOr : Expr = {
+  <l : BXor> <rest : (BOrOp BXor)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over a bitwise XOR
-BXor: Expr = {
-  <l:BAnd> <rest:(BXorOp BAnd)*> => {
+};
+BXor : Expr = {
+  <l : BAnd> <rest : (BXorOp BAnd)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over bitwise AND
-BAnd: Expr = {
-  <l:Eq> <rest:(BAndOp Eq)*> => {
+};
+BAnd : Expr = {
+  <l : Eq> <rest : (BAndOp Eq)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over (in)equality
-Eq: Expr = {
-  <l:Rel> <rest:(EqOp Rel)*> => {
+};
+Eq : Expr = {
+  <l : Rel> <rest : (EqOp Rel)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over relative ordering comparators
-Rel: Expr = {
-  <l:Shift> <rest:(RelOp Shift)*> => {
+};
+Rel : Expr = {
+  <l : Shift> <rest : (RelOp Shift)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over arithmetic shift
+};
 Shift: Expr = {
-  <l:Add> <rest:(ShiftOp Add)*> => {
+  <l : Add> <rest : (ShiftOp Add)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over arithmetic add/sub
-Add: Expr = {
-  <l:Mul> <rest:(AddOp Mul)*> => {
+};
+Add : Expr = {
+  <l : Mul> <rest : (AddOp Mul)*> => {
     let mut expr = l;
     for (op, rhs) in rest {
       expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
     }
     expr
   },
-}
-
-// Expression over arithmetic mul/div/mod
-Mul: Expr = {
-  <l:Unary> <rest:(MulOp Unary)*> => {
-    let mut expr = l;
-    for (op, rhs) in rest {
-      expr = Expr::Binop(Box::new(expr), op, Box::new(rhs), None);
-    }
-    expr
+};
+Mul : Expr = {
+  <StrictMul> => <>,
+  <Unary> => <>,
+};
+StrictMul : Expr = {
+  <p : Pointery> <u : UnaryNoDeref> => {
+    let rhs = if p.1 > 1 {
+      Expr::Deref(Box::new(u), p.1 - 1, None)
+    } else {
+      u
+    };
+    Expr::Binop(Box::new(p.0), BinOp::Mul, Box::new(rhs), None)
   },
-}
-
-// Expression over a unary
-Unary: Expr = {
-  <o:UnOp> <e:Unary> => match (o,&e) {
+  <p : PointeryDecl> <u : UnaryNoDeref> => {
+    let rhs = if p.1 > 1 {
+      Expr::Deref(Box::new(u), p.1 - 1, None)
+    } else {
+      u
+    };
+    Expr::Binop(Box::new(Expr::Variable(p.0, None)), BinOp::Mul, Box::new(rhs), None)
+  },
+  <l : StrictMul> "*" <r : Unary> => Expr::Binop(Box::new(l), BinOp::Mul, Box::new(r), None),
+  <l : Mul> "/" <r : Unary> => Expr::Binop(Box::new(l), BinOp::Div, Box::new(r), None),
+  <l : Mul> "%" <r : Unary> => Expr::Binop(Box::new(l), BinOp::Mod, Box::new(r), None),
+};
+Pointery : (Expr, usize) = {
+  <u : UnaryNoIdent> <p : PointerSuffix+> => (u, p.len()),
+};
+Unary : Expr = {
+  "*" <e : Unary> => Expr::Deref(Box::new(e), 1, None),
+  <UnaryNoDeref> => <>,
+};
+UnaryNoDeref : Expr = {
+  <UnaryBase> => <>,
+  <Postfix> => <>,
+};
+UnaryNoIdent : Expr = {
+  "*" <e : Unary> => Expr::Deref(Box::new(e), 1, None),
+  <UnaryBase> => <>,
+  <PostfixNoIdent> => <>,
+};
+UnaryBase : Expr = {
+  <o : UnOp> <e : Unary> => match (o, &e) {
     (UnOp::Neg, Expr::Number(a)) => Expr::Number(-1 * (*a)),
     (UnOp::Not, Expr::Number(a)) => Expr::Number(!(*a)),
     (UnOp::LNot, Expr::Bool(a)) => Expr::Bool(!a),
     _ => Expr::Unop(o, Box::new(e), None),
   },
-  <e:Primary> => e,
-}
+};
+Postfix : Expr = {
+  <PostfixBase> => <>,
+  <Primary> => <>,
+};
+PostfixNoIdent : Expr = {
+  <PostfixBase> => <>,
+  <PrimaryNoIdent> => <>,
+};
+PostfixBase : Expr = {
+  <b : Postfix> "[" <e : Expr> "]" => Expr::ArrayIndex(Box::new(b), Box::new(e), None),
+  <b : Postfix> "->" <i : Ident> => Expr::FieldDeref(Box::new(Expr::Deref(Box::new(b), 1, None)), i, None),
+  <b : Postfix> "." <i : Ident> => Expr::FieldDeref(Box::new(b), i, None),
+};
 
-// Leaves in an expression
+/// Leaves in an expression
 Primary : Expr = {
+  <PrimaryNoIdent> => <>,
+  <i : Ident> => Expr::Variable(i, None),
+};
+PrimaryNoIdent : Expr = {
   "(" <Expr> ")" => <>,
-  <n:Number> => Expr::Number(n),
-  <b:Boolean> => Expr::Bool(b),
-  <v:Ident> => Expr::Variable(v, None),
-  <c:Call> => c,
-}
+  <n : Number> => Expr::Number(n),
+  <b : Boolean> => Expr::Bool(b),
+  "null" => Expr::Null,
+  "alloc" "(" <t : Type> ")" => Expr::Alloc(t, None),
+  "alloc_array" "(" <t : Type> "," <e : Expr> ")" => Expr::AllocArray(t, Box::new(e), None),
+  <Call> => <>,
+};
 
-// Expression for a function call
+/// Expression for a function call
 Call : Expr = {
-  <i: Ident> "(" ")"=> Expr::Call(i, vec![], None),
-  <i: Ident> "(" <e: Expr> <af: ArgFollow*> ")" => Expr::Call(
+  <i : Ident> "(" ")"=> Expr::Call(i, vec![], None),
+  <i : Ident> "(" <e : Expr> <a : ArgFollow*> ")" => Expr::Call(
     i,
-    std::iter::once(e).chain(af.into_iter()).collect::<Vec<Expr>>(),
+    std::iter::once(e).chain(a.into_iter()).collect::<Vec<Expr>>(),
     None
   ),
-}
+};
 
-// Arguments following the first one in an function call
+/// Arguments following the first one in an function call
 ArgFollow : Expr = {
-  "," <e: Expr> => e,
-}
+  "," <Expr> => <>,
+};
 
-// ############### Operations ###############
+/// Operation declarations
 LOrOp: BinOp = {
   "||" => BinOp::LOr,
-}
-
+};
 LAndOp: BinOp = {
   "&&" => BinOp::LAnd,
-}
-
+};
 BOrOp: BinOp = {
   "|" => BinOp::Or,
-}
-
+};
 BXorOp: BinOp = {
   "^" => BinOp::Xor,
-}
-
+};
 BAndOp: BinOp = {
   "&" => BinOp::And,
-}
-
+};
 EqOp: BinOp = {
   "==" => BinOp::CmpEq,
   "!=" => BinOp::CmpNeq,
-}
-
+};
 RelOp: BinOp = {
   "<" => BinOp::Lt,
   ">" => BinOp::Gt,
   "<=" => BinOp::Lte,
   ">=" => BinOp::Gte,
-}
-
+};
 ShiftOp: BinOp = {
   "<<" => BinOp::Sal,
   ">>" => BinOp::Sar,
-}
-
+};
 AddOp: BinOp = {
   "+" => BinOp::Add,
   "-" => BinOp::Sub,
-}
-
+};
 MulOp: BinOp = {
   "*" => BinOp::Mul,
   "/" => BinOp::Div,
   "%" => BinOp::Mod,
-}
-
+};
 UnOp: UnOp = {
   "-" => UnOp::Neg,
   "~" => UnOp::Not,
   "!" => UnOp::LNot,
-}
-
+};
 PostOp: PostOp = {
   "++" => PostOp::Inc,
   "--" => PostOp::Dec,
-}
-
+};
 AsnOp: AsnOp = {
   "=" => AsnOp::Equal,
   "+=" => AsnOp::Plus,
@@ -417,4 +574,4 @@ AsnOp: AsnOp = {
   "|=" => AsnOp::Or,
   "<<=" => AsnOp::Sal,
   ">>=" => AsnOp::Sar,
-}
+};
