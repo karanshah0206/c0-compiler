@@ -187,18 +187,6 @@ pub enum PostOp {
   Dec,
 }
 
-impl PostOp {
-  /// Transform post-operator to binary operator.
-  pub fn to_binop(self) -> BinOp {
-    use BinOp::*;
-
-    match self {
-      PostOp::Inc => Add,
-      PostOp::Dec => Sub,
-    }
-  }
-}
-
 /// Assignment operators.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AsnOp {
