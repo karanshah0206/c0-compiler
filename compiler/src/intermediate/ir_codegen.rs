@@ -89,23 +89,29 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext, st: &SymbolTable) -> bool {
 
         ctx.write_variable(var_id, assigned_temp, ctx.current_block_label);
       } else {
+        let addr = munch_lvalue_address(lhs, ctx, st);
+
         let value = match asn_op {
           AsnOp::Equal => munch_expression(expr, ctx, st),
           op => {
-            let lhs_val = munch_expression(lhs, ctx, st);
+            let lhs_temp = ctx.create_temp(lhs.get_type());
+            ctx.add_instr_to_block(Instr::Load {
+              dest: lhs_temp.clone(),
+              addr: addr.clone(),
+            });
+
             let rhs = munch_expression(expr, ctx, st);
             let dest = ctx.create_temp(lhs.get_type());
             ctx.add_instr_to_block(Instr::BinOp {
               op: op.to_binop().unwrap(),
               dest: dest.clone(),
-              lhs: lhs_val,
+              lhs: Operand::Temp(lhs_temp),
               rhs,
             });
             Operand::Temp(dest)
           }
         };
 
-        let addr = munch_lvalue_address(lhs, ctx, st);
         ctx.add_instr_to_block(Instr::Store { addr, src: value });
       }
 
