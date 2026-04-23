@@ -255,6 +255,11 @@ impl SymbolTable {
     })
   }
 
+  /// Get ordered field list of a struct definition.
+  pub fn get_struct_fields(&self, struct_id: &Ident) -> Option<&Vec<(Typ, Ident)>> {
+    self.structs.get(struct_id)
+  }
+
   /// Check whether an identifier is a type alias.
   pub fn is_typedef(&self, id: &Ident) -> bool {
     self.typ.contains_key(id) && !self.function_context.contains_key(id)
