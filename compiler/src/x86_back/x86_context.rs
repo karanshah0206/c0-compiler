@@ -9,6 +9,8 @@ use crate::x86_back::{
 
 /// Width in bytes for a slot on stack allotted to a temporary.
 const STACK_SLOT_WIDTH: usize = 8;
+
+/// SysV AMD64 stack alignment.
 const STACK_ALIGNMENT: usize = 16;
 
 /// Potential kinds of traps that can be called in the program.
@@ -35,6 +37,7 @@ impl Trap {
 
 /// Generate global trap instructions.
 pub fn generate_traps() -> Vec<X86Instr> {
+  const MEM_ERROR_SIGNAL_CODE: i64 = 12;
   vec![
     // abort trap
     X86Instr::Label(Trap::Abort.get_global_label()),
@@ -53,7 +56,7 @@ pub fn generate_traps() -> Vec<X86Instr> {
     X86Instr::Label(Trap::MemError.get_global_label()),
     X86Instr::Mov(
       X86Operand::Immediate(Immediate {
-        value: 12,
+        value: MEM_ERROR_SIGNAL_CODE,
         width: W64,
       }),
       X86Operand::Register(X86WReg {
@@ -733,9 +736,10 @@ impl X86Context {
 /// Get the bit-width for fundamental C0 types.
 fn width_for_type(typ: &Typ) -> Width {
   match typ {
-    Typ::Int => W32,
     Typ::Bool => W8,
-    Typ::Void | Typ::Typedef(_) => {
+    Typ::Int => W32,
+    Typ::Pointer(..) | Typ::Array(..) => W64,
+    Typ::Void | Typ::Null | Typ::Typedef(_) | Typ::Struct(_) => {
       unreachable!("Bad width evaluation in x86 codegen for type {typ}.")
     }
   }

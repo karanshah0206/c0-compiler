@@ -37,6 +37,7 @@ pub enum GlobalDeclaration {
   /// Function definition (type, identifier, parameters, body)
   FDefn(Typ, Ident, Vec<Variable>, Stmt),
   /// Struct declaration (identifier)
+  #[allow(unused)]
   SDecl(Ident),
   /// Struct definition (identifier, field variables)
   SDefn(Ident, Vec<Variable>),
@@ -94,7 +95,7 @@ pub enum Expr {
   Deref(Box<Expr>, usize, Option<Typ>),
   /// Fetch from array at index (source, index, type)
   ArrayIndex(Box<Expr>, Box<Expr>, Option<Typ>),
-  /// Dereference field of a struct (source, field variable)
+  /// Dereference field of a struct (source, field id, field type)
   StructDeref(Box<Expr>, Ident, Option<Typ>),
   /// Allocate heap memory for a pointer (data type, pointer type)
   Alloc(Typ, Option<Typ>),

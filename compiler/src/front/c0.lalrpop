@@ -316,7 +316,7 @@ Decl : Stmt = {
   <t : DeclType> <i : Ident> => Stmt::Decl((t, i)),
   <t : DeclType> <i : Ident> "=" <e : Expr> => Stmt::Defn((t, i), e),
   <t : Ident> <i : Ident> => Stmt::Decl((Typ::Typedef(t), i)),
-  <t : Ident> <i : Ident> "-" <e : Expr> => Stmt::Defn((Typ::Typedef(t), i), e),
+  <t : Ident> <i : Ident> "=" <e : Expr> => Stmt::Defn((Typ::Typedef(t), i), e),
 };
 
 /// Simple statements
@@ -450,7 +450,13 @@ Pointery : (Expr, usize) = {
   <u : UnaryNoIdent> <p : PointerSuffix+> => (u, p.len()),
 };
 Unary : Expr = {
-  "*" <e : Unary> => Expr::Deref(Box::new(e), 1, None),
+  "*" <e : Unary> => {
+    if let Expr::Deref(inner, depth, _) = e {
+      Expr::Deref(inner, depth + 1, None)
+    } else {
+      Expr::Deref(Box::new(e), 1, None)
+    }
+  },
   <UnaryNoDeref> => <>,
 };
 UnaryNoDeref : Expr = {
@@ -458,7 +464,13 @@ UnaryNoDeref : Expr = {
   <Postfix> => <>,
 };
 UnaryNoIdent : Expr = {
-  "*" <e : Unary> => Expr::Deref(Box::new(e), 1, None),
+  "*" <e : Unary> => {
+    if let Expr::Deref(inner, depth, _) = e {
+      Expr::Deref(inner, depth + 1, None)
+    } else {
+      Expr::Deref(Box::new(e), 1, None)
+    }
+  },
   <UnaryBase> => <>,
   <PostfixNoIdent> => <>,
 };

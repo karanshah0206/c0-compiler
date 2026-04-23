@@ -124,7 +124,8 @@ fn collect_function_signatures(
           },
         );
       }
-      GlobalDeclaration::Typedef(..) => {}
+      GlobalDeclaration::SDefn(..) => todo!("Pending LLVM lowering of structs"),
+      GlobalDeclaration::SDecl(..) | GlobalDeclaration::TDefn(..) => {}
     }
   }
 }
@@ -136,6 +137,7 @@ fn llvm_type(typ: &Typ) -> &'static str {
     Typ::Int => "i32",
     Typ::Bool => "i1",
     Typ::Typedef(_) => unreachable!("Unresolved typedefs found in LLVM backend."),
+    _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
   }
 }
 
@@ -298,6 +300,7 @@ fn generate_instr(
         Typ::Typedef(typedef) => {
           unreachable!("Unresolved typedef {typedef} found in LLVM backend.")
         }
+        _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
       }
     }
   }
@@ -310,6 +313,7 @@ fn emit_operand_of_typ(op: &Operand, typ: &Typ) -> String {
     Typ::Int => emit_i32(op),
     Typ::Void => unreachable!("Typechecker erroneously allows operands to be of type void."),
     Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
+    _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
   }
 }
 
@@ -328,6 +332,7 @@ fn emit_const_of_typ(value: i64, typ: &Typ) -> String {
       unreachable!("Typechecker erroneously permits constants assigned to the void type.")
     }
     Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
+    _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
   }
 }
 
@@ -375,8 +380,7 @@ fn cast_to_i32(op: &Operand, aux_counter: &mut usize) -> (String, String) {
         )
       }
       Typ::Int => (format!("%t{id}"), String::new()),
-      Typ::Void => unreachable!("Cannot cast from void to boolean."),
-      Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
+      _ => unreachable!("Bad typecast to boolean in LLVM code generation."),
     },
   }
 }

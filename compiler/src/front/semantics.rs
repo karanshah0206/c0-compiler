@@ -12,9 +12,11 @@ pub fn analyze_program(header_ast: &mut ProgramAST, source_ast: &mut ProgramAST)
   // analyze declarations in header
   for declaration in header_ast {
     match declaration {
-      Typedef(typ, id) => symbol_table.add_typedef(id, typ),
+      TDefn(typ, id) => symbol_table.add_typedef(id, typ),
+      SDefn(id, fields) => symbol_table.define_struct(id, fields),
       FDecl(typ, id, params) => symbol_table.declare_function(id, typ, params, true),
       FDefn(_, _, _, _) => unreachable!("Function definitions are illegal in a header file."),
+      SDecl(_) => {} // struct declarations are inconsequential
     }
   }
 
@@ -26,19 +28,21 @@ pub fn analyze_program(header_ast: &mut ProgramAST, source_ast: &mut ProgramAST)
   // analyze source program
   for declaration in source_ast {
     match declaration {
-      Typedef(typ, id) => symbol_table.add_typedef(id, typ),
+      TDefn(typ, id) => symbol_table.add_typedef(id, typ),
+      SDefn(id, fields) => symbol_table.define_struct(id, fields),
       FDecl(typ, id, params) => symbol_table.declare_function(id, typ, params, false),
       FDefn(typ, id, params, ast) => {
         symbol_table.define_function(id, typ, params);
         functions_to_define.extend(analyze_function(id, ast, typ, &mut symbol_table));
       }
+      SDecl(_) => {} // struct declarations are inconsequential
     }
   }
 
   // ensure that all functions that are called are defined
   for function in functions_to_define {
     assert!(
-      symbol_table.is_defined(&function),
+      symbol_table.is_function_defined(&function),
       "Missing definition for function {function}."
     );
   }
@@ -86,7 +90,7 @@ fn analyze_function(id: &Ident, ast: &mut Stmt, typ: &Typ, st: &mut SymbolTable)
     analyze_stmt(id, ast, st).returns || typ == &Typ::Void,
     "{id} must always return {typ}."
   );
-  st.get_mut_function_context(id).get_function_calls()
+  st.get_function_context(id).get_function_calls()
 }
 
 /// Perform semantic analysis on a statement.
@@ -103,8 +107,14 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
 
       var.0 = st.resolve_type(var.0.clone());
 
-      st.get_mut_function_context(id).declare_var(var.clone());
+      assert!(
+        is_var_type_valid(&var.0),
+        "Variable {} declared with type {}.",
+        var.1,
+        var.0
+      );
 
+      st.get_mut_function_context(id).declare_var(var.clone());
       TcResult::ok()
     }
     Stmt::Defn(var, expr) => {
@@ -116,81 +126,115 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
         var.1
       );
 
-      analyze_expr(id, expr, st);
-
       var.0 = st.resolve_type(var.0.clone());
-      st.get_mut_function_context(id).declare_var(var.clone());
 
       assert!(
-        var.0 == expr.get_type(),
+        is_var_type_valid(&var.0),
+        "Variable {} declared with type {}.",
+        var.1,
+        var.0
+      );
+
+      analyze_expr(id, expr, st);
+
+      assert!(
+        var.0 == expr.get_type()
+          || (matches!(var.0, Typ::Pointer(..)) && expr.get_type() == Typ::Null),
         "Mismatching types in defining variable {}.",
         var.1
       );
 
+      st.get_mut_function_context(id).declare_var(var.clone());
       st.get_mut_function_context(id).define_var(var.clone());
-
       TcResult::ok_def(HashSet::from_iter(vec![var.1.to_string()]))
     }
-    Stmt::Asgn(var_id, asn_op, expr) => {
-      // assignment to declared variable
+    Stmt::Asgn(lhs, asn_op, expr) => {
+      // assignment to an assignable expression
 
-      assert!(
-        st.get_mut_function_context(id).is_var_declared(var_id),
-        "Variable {var_id} not declared in this scope."
-      );
-
-      let var_typ = st.get_mut_function_context(id).get_var_type(var_id);
-
-      analyze_expr(id, expr, st);
-      assert!(
-        expr.get_type() == var_typ,
-        "Mismatching types in assignment to variable {var_id}."
-      );
-
-      // typecheck elaboration into binary operation
-      if let Some(binop) = asn_op.to_binop() {
-        let mut binop_expr = Expr::Binop(
-          Box::new(Expr::Variable(var_id.to_string(), None)),
-          binop,
-          Box::new(expr.clone()),
-          None,
-        );
-
-        analyze_expr(id, &mut binop_expr, st);
+      if *asn_op == AsnOp::Equal
+        && let Some(mut var) = resolve_pointer_mul_ambiguity(lhs, st)
+      {
         assert!(
-          binop_expr.get_type() == var_typ,
-          "Mismatching types in assignment to variable {var_id}",
+          !st.is_typedef(&var.1),
+          "Cannot use variable identifier {} because it is a type definition.",
+          var.1
         );
+
+        var.0 = st.resolve_type(var.0.clone());
+
+        assert!(
+          is_var_type_valid(&var.0),
+          "Variable {} declared with type {}.",
+          var.1,
+          var.0
+        );
+
+        analyze_expr(id, expr, st);
+
+        assert!(
+          var.0 == expr.get_type()
+            || (matches!(var.0, Typ::Pointer(..)) && expr.get_type() == Typ::Null),
+          "Mismatching types in defining variable {}.",
+          var.1
+        );
+
+        st.get_mut_function_context(id).declare_var(var.clone());
+        st.get_mut_function_context(id).define_var(var.clone());
+        return TcResult::ok_def(HashSet::from_iter(vec![var.1.to_string()]));
       }
 
-      st.get_mut_function_context(id)
-        .define_var((var_typ, var_id.to_string()));
+      let target_var = match lhs {
+        Expr::Variable(var_id, _) => Some(var_id.clone()),
+        _ => None,
+      };
 
-      TcResult::ok_def(HashSet::from_iter(vec![var_id.to_string()]))
-    }
-    Stmt::PostOp(var_id, _) => {
-      // post-operation (++/--) statement
+      let lhs_typ = analyze_assign_target(id, lhs, st);
+      analyze_expr(id, expr, st);
 
       assert!(
-        st.get_mut_function_context(id).is_var_declared(var_id),
-        "Variable {var_id} not declared in this scope."
-      );
-
-      let var_typ = st.get_mut_function_context(id).get_var_type(var_id);
-      assert!(
-        var_typ == Typ::Int,
-        "Post-operations can only be performed on int, but {var_id} is of type {var_typ}."
+        is_var_type_valid(&lhs_typ),
+        "Assignment target has invalid type {lhs_typ}."
       );
 
       assert!(
-        st.get_mut_function_context(id).is_var_defined(var_id),
-        "Cannot perform post-op on undefined variable {var_id}."
+        expr.get_type() != Typ::Void,
+        "Cannot assign to the void type."
       );
 
-      st.get_mut_function_context(id)
-        .define_var((var_typ, var_id.to_string()));
+      if *asn_op == AsnOp::Equal {
+        assert!(
+          expr.get_type() == lhs_typ
+            || (matches!(lhs_typ, Typ::Pointer(..)) && expr.get_type() == Typ::Null),
+          "Mismatching types in assignment."
+        );
+      } else {
+        if let Some(var_id) = target_var.as_ref() {
+          assert!(
+            st.get_function_context(id).is_var_defined(var_id),
+            "Variable {var_id} not defined in this scope."
+          );
+        }
 
-      TcResult::ok_def(HashSet::from_iter(vec![var_id.to_string()]))
+        // typecheck elaboration into binary operation
+        if let Some(binop) = asn_op.to_binop() {
+          let mut binop_expr =
+            Expr::Binop(Box::new(lhs.clone()), binop, Box::new(expr.clone()), None);
+          analyze_expr(id, &mut binop_expr, st);
+
+          assert!(
+            binop_expr.get_type() == lhs_typ,
+            "Mismatching types in assignment."
+          );
+        }
+      }
+
+      if let Some(var_id) = target_var {
+        st.get_mut_function_context(id)
+          .define_var((lhs_typ, var_id.clone()));
+        TcResult::ok_def(HashSet::from_iter(vec![var_id]))
+      } else {
+        TcResult::ok()
+      }
     }
     Stmt::Cond(cond_expr, if_stmt, else_stmt) => {
       // an if-else statement
@@ -367,7 +411,9 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
           analyze_expr(id, expr, st);
           let expr_typ = expr.get_type();
           assert!(
-            expr_typ == typ,
+            expr_typ == typ
+              || (matches!(expr_typ, Typ::Pointer(..)) && typ == Typ::Null)
+              || (matches!(typ, Typ::Pointer(..)) && expr_typ == Typ::Null),
             "Returning {expr_typ}, but function {id} returns {typ}."
           );
           assert!(
@@ -396,7 +442,40 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
       TcResult::ok()
     }
     // standalone expression
-    Stmt::Expr(expr) => analyze_expr(id, expr, st),
+    Stmt::Expr(expr) => {
+      if let Some(mut var) = resolve_pointer_mul_ambiguity(expr, st) {
+        assert!(
+          !st.is_typedef(&var.1),
+          "Cannot use variable identifier {} because it is a type definition.",
+          var.1
+        );
+
+        var.0 = st.resolve_type(var.0.clone());
+
+        assert!(
+          is_var_type_valid(&var.0),
+          "Illegal type {} for variable {}.",
+          var.0,
+          var.1
+        );
+
+        st.get_mut_function_context(id).declare_var(var);
+        TcResult::ok()
+      } else {
+        let res = analyze_expr(id, expr, st);
+        assert!(
+          matches!(
+            expr,
+            Expr::Call(..) | Expr::Alloc(..) | Expr::AllocArray(..)
+          ) || matches!(
+            expr.get_type(),
+            Typ::Int | Typ::Bool | Typ::Pointer(..) | Typ::Array(..) | Typ::Null | Typ::Void
+          ),
+          "Bad expression statement {expr}."
+        );
+        res
+      }
+    }
     // no operation (do nothing)
     Stmt::NoOp() => TcResult::ok(),
   }
@@ -409,10 +488,11 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
   match expr {
     Number(_) => TcResult::ok(),
     Bool(_) => TcResult::ok(),
+    Null => TcResult::ok(),
     Variable(var_id, typ) => {
       // variable in the source code
 
-      let function_ctx = st.get_mut_function_context(id);
+      let function_ctx = st.get_function_context(id);
       *typ = Some(function_ctx.get_var_type(var_id));
       assert!(
         function_ctx.is_var_defined(var_id),
@@ -429,7 +509,9 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
       let e_typ = l_expr.get_type();
 
       assert!(
-        e_typ == r_expr.get_type(),
+        e_typ == r_expr.get_type()
+          || (matches!(e_typ, Typ::Null) && matches!(r_expr.get_type(), Typ::Pointer(..)))
+          || (matches!(e_typ, Typ::Pointer(..)) && matches!(r_expr.get_type(), Typ::Null)),
         "Binary operands must be of the same type."
       );
 
@@ -459,8 +541,8 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
         }
         BinOp::CmpEq | BinOp::CmpNeq => {
           assert!(
-            e_typ != Typ::Void,
-            "Binary operator {bin_op} doesn't support the void type."
+            e_typ != Typ::Void && !matches!(e_typ, Typ::Struct(..)),
+            "Binary operator {bin_op} doesn't support the type {e_typ}."
           );
           Some(Typ::Bool)
         }
@@ -503,14 +585,24 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
       analyze_expr(id, if_expr, st);
       analyze_expr(id, else_expr, st);
 
-      let e_typ = if_expr.get_type();
+      let if_typ = if_expr.get_type();
+      let else_typ = else_expr.get_type();
+
+      let e_typ = if if_typ == Typ::Null {
+        else_typ.clone()
+      } else {
+        if_typ.clone()
+      };
+
       assert!(
-        e_typ == else_expr.get_type(),
+        if_typ == else_typ
+          || (if_typ == Typ::Null && matches!(else_typ, Typ::Pointer(..)))
+          || (matches!(if_typ, Typ::Pointer(..)) && else_typ == Typ::Null),
         "Ternary's arms must be of matching type."
       );
       assert!(
-        e_typ != Typ::Void,
-        "Ternary does not support operating over the void type."
+        e_typ != Typ::Void && !matches!(e_typ, Typ::Struct(..)),
+        "Ternary does not support operating over the type {e_typ}."
       );
 
       *typ = Some(e_typ);
@@ -525,7 +617,7 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
         .unwrap_or_else(|| unreachable!("Call to unknown function {func_id}"));
 
       assert!(
-        !st.get_mut_function_context(id).is_var_declared(func_id),
+        !st.get_function_context(id).is_var_declared(func_id),
         "Cannot call function {func_id} as it is shadowed by an identical identifier."
       );
 
@@ -536,7 +628,10 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
 
       for (i, arg) in args.iter_mut().enumerate() {
         analyze_expr(id, arg, st);
-        assert!(arg.get_type() == params[i]);
+        assert!(
+          arg.get_type() == params[i]
+            || (arg.get_type() == Typ::Null && matches!(params[i], Typ::Pointer(..)))
+        );
       }
 
       st.get_mut_function_context(id)
@@ -544,6 +639,284 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
 
       *typ = Some(ret_typ);
       TcResult::ok()
+    }
+    Deref(pointer_expr, depth, typ) => {
+      // pointer dereference
+
+      analyze_expr(id, pointer_expr, st);
+
+      if let Typ::Pointer(inner, ref mut pointer_depth) = pointer_expr.get_type() {
+        *typ = if *pointer_depth > *depth {
+          *pointer_depth -= *depth;
+          Some(Typ::Pointer(inner, *pointer_depth))
+        } else if *pointer_depth == *depth {
+          Some(*inner)
+        } else {
+          panic!("Dimension mismatch for pointer dereferencing in {id}.");
+        };
+      } else {
+        panic!("Bad source for pointer dereference in {id}.");
+      }
+
+      TcResult::ok()
+    }
+    ArrayIndex(array_expr, index_expr, typ) => {
+      // array indexing
+
+      analyze_expr(id, array_expr, st);
+      analyze_expr(id, index_expr, st);
+
+      assert!(
+        index_expr.get_type() == Typ::Int,
+        "Array indices must evaluate to integers."
+      );
+
+      if let Typ::Array(inner, depth) = array_expr.get_type() {
+        *typ = if depth > 1 {
+          Some(Typ::Array(inner.clone(), depth - 1))
+        } else {
+          Some(*inner)
+        };
+      } else {
+        panic!("Cannot index on a non-array type.")
+      }
+
+      TcResult::ok()
+    }
+    StructDeref(struct_expr, field_id, typ) => {
+      // field dereferencing for structs
+
+      analyze_expr(id, struct_expr, st);
+
+      if let Typ::Struct(struct_id) = struct_expr.get_type() {
+        assert!(
+          st.is_struct_defined(&struct_id),
+          "Attempting to fetch field for undefined struct {struct_id}."
+        );
+
+        *typ = Some(
+          st.get_struct_field_type(&struct_id, field_id)
+            .unwrap_or_else(|| panic!("Struct {struct_id} does not have a field {field_id}.")),
+        );
+      } else {
+        panic!("Attempting to fetch field from a non-struct type.");
+      }
+
+      TcResult::ok()
+    }
+    Alloc(alloc_type, typ) => {
+      // heap allocation for a pointer
+
+      *alloc_type = st.resolve_type(alloc_type.clone());
+
+      if let Typ::Struct(struct_id) = alloc_type {
+        assert!(
+          st.is_struct_defined(struct_id),
+          "Attempting to allocate memory for undefined struct {struct_id}."
+        );
+      }
+      assert!(
+        matches!(*alloc_type, Typ::Struct(_)) || is_var_type_valid(alloc_type),
+        "Bad type for heap allocation."
+      );
+
+      *typ = Some(if let Typ::Pointer(inner, depth) = alloc_type.clone() {
+        Typ::Pointer(inner, depth + 1)
+      } else {
+        Typ::Pointer(Box::new(alloc_type.clone()), 1)
+      });
+      TcResult::ok()
+    }
+    AllocArray(elem_type, size_expr, typ) => {
+      // heap allocation for an array
+
+      *elem_type = st.resolve_type(elem_type.clone());
+
+      if let Typ::Struct(struct_id) = elem_type {
+        assert!(
+          st.is_struct_defined(struct_id),
+          "Attempting to allocate memory for undefined struct {struct_id}."
+        );
+      }
+      assert!(
+        matches!(*elem_type, Typ::Struct(_)) || is_var_type_valid(elem_type),
+        "Bad type for heap allocation."
+      );
+
+      analyze_expr(id, size_expr, st);
+      assert!(
+        size_expr.get_type() == Typ::Int,
+        "Array allocation requires integer value for size parameter."
+      );
+
+      *typ = Some(if let Typ::Array(inner, depth) = elem_type.clone() {
+        Typ::Array(inner, depth + 1)
+      } else {
+        Typ::Array(Box::new(elem_type.clone()), 1)
+      });
+      TcResult::ok()
+    }
+  }
+}
+
+/// Perform semantic analysis on an assignment target.
+fn analyze_assign_target(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> Typ {
+  use Expr::*;
+
+  fn is_lvalue_expr(expr: &Expr) -> bool {
+    match expr {
+      Expr::Variable(_, _) => true,
+      Expr::Deref(inner, _, _) | Expr::ArrayIndex(inner, _, _) | Expr::StructDeref(inner, _, _) => {
+        is_lvalue_expr(inner)
+      }
+      _ => false,
+    }
+  }
+
+  let typ = match expr {
+    Variable(var_id, typ) => {
+      let function_ctx = st.get_function_context(id);
+
+      assert!(
+        function_ctx.is_var_declared(var_id),
+        "Variable {var_id} not declared in this scope."
+      );
+
+      let var_typ = function_ctx.get_var_type(var_id);
+      *typ = Some(var_typ.clone());
+      var_typ
+    }
+    Deref(pointer_expr, depth, typ) => {
+      analyze_expr(id, pointer_expr, st);
+
+      assert!(
+        is_lvalue_expr(pointer_expr.as_ref()),
+        "Pointer dereference assignment target must be based on an lvalue expression."
+      );
+
+      if let Typ::Pointer(inner, pointer_depth) = pointer_expr.get_type() {
+        *typ = if pointer_depth > *depth {
+          Some(Typ::Pointer(inner, pointer_depth - *depth))
+        } else if pointer_depth == *depth {
+          Some(*inner)
+        } else {
+          panic!("Dimension mismatch for pointer dereferencing in {id}.");
+        };
+      } else {
+        panic!("Bad source for pointer dereference in {id}.");
+      }
+
+      typ.clone().unwrap_or(Typ::Void)
+    }
+    ArrayIndex(array_expr, index_expr, typ) => {
+      analyze_expr(id, array_expr, st);
+      analyze_expr(id, index_expr, st);
+
+      assert!(
+        is_lvalue_expr(array_expr.as_ref()),
+        "Array indexing assignment target must be based on an lvalue expression."
+      );
+
+      assert!(
+        index_expr.get_type() == Typ::Int,
+        "Array indices must evaluate to integers."
+      );
+
+      if let Typ::Array(inner, depth) = array_expr.get_type() {
+        *typ = if depth > 1 {
+          Some(Typ::Array(inner.clone(), depth - 1))
+        } else {
+          Some(*inner)
+        };
+      } else {
+        panic!("Cannot index on a non-array type.")
+      }
+
+      typ.clone().unwrap_or(Typ::Void)
+    }
+    StructDeref(struct_expr, field_id, typ) => {
+      assert!(
+        is_lvalue_expr(struct_expr.as_ref()),
+        "Struct field assignment target must be based on an lvalue expression."
+      );
+
+      analyze_expr(id, struct_expr, st);
+
+      if let Typ::Struct(struct_id) = struct_expr.get_type() {
+        assert!(
+          st.is_struct_defined(&struct_id),
+          "Attempting to fetch field for undefined struct {struct_id}."
+        );
+
+        *typ = Some(
+          st.get_struct_field_type(&struct_id, field_id)
+            .unwrap_or_else(|| panic!("Struct {struct_id} does not have a field {field_id}.")),
+        );
+      } else {
+        panic!("Attempting to fetch field from a non-struct type.");
+      }
+
+      typ.clone().unwrap_or(Typ::Void)
+    }
+    _ => panic!("Invalid assignment target."),
+  };
+
+  typ
+}
+
+/// Resolve ambiguity between pointers and multiplication operation.
+/// If the expression is a pointer, the function returns Some(pointer_var).
+fn resolve_pointer_mul_ambiguity(expr: &Expr, st: &SymbolTable) -> Option<Variable> {
+  match expr {
+    Expr::Binop(lhs, BinOp::Mul, rhs, _) => {
+      if let Expr::Variable(id, _) = lhs.as_ref()
+        && st.is_typedef(id)
+      {
+        let (var_id, pointer_depth) = get_pointer_var_depth(rhs)?;
+        let typedef_expr = Typ::Typedef(id.clone());
+        let pointer = if let Typ::Pointer(inner, depth) = typedef_expr {
+          Typ::Pointer(inner, depth + pointer_depth + 1)
+        } else {
+          Typ::Pointer(Box::new(typedef_expr), pointer_depth + 1)
+        };
+        Some((pointer, var_id))
+      } else {
+        None
+      }
+    }
+    _ => None,
+  }
+}
+
+/// Determine the identity and dimensions of a pointer type.
+fn get_pointer_var_depth(expr: &Expr) -> Option<(Ident, usize)> {
+  match expr {
+    Expr::Variable(var, _) => Some((var.clone(), 0)),
+    Expr::Deref(inner, depth, _) => {
+      get_pointer_var_depth(inner).map(|(var, inner_depth)| (var, inner_depth + depth))
+    }
+    _ => None,
+  }
+}
+
+/// Helper to check whether a variable can be of given type.
+fn is_var_type_valid(typ: &Typ) -> bool {
+  match typ {
+    Typ::Int | Typ::Bool => true,
+    Typ::Array(inner, _) | Typ::Pointer(inner, _) => is_ptr_type_valid(inner),
+    Typ::Void | Typ::Null | Typ::Typedef(_) | Typ::Struct(_) => false,
+  }
+}
+
+/// Helper to check if a pointer's underlying type is valid.
+fn is_ptr_type_valid(typ: &Typ) -> bool {
+  let mut cur = typ;
+
+  loop {
+    match cur {
+      Typ::Int | Typ::Bool | Typ::Struct(_) => return true,
+      Typ::Array(inner, _) | Typ::Pointer(inner, _) => cur = inner.as_ref(),
+      Typ::Void | Typ::Null | Typ::Typedef(_) => return false,
     }
   }
 }

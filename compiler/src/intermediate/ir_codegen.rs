@@ -17,7 +17,7 @@ pub fn munch_program(ast: &ProgramAST, symbol_table: &SymbolTable) -> ProgramIR 
     .iter()
     .filter_map(|decl| {
       if let GlobalDeclaration::FDefn(ret_typ, name, params, body) = decl
-        && symbol_table.is_defined(name)
+        && symbol_table.is_function_defined(name)
       {
         Some((name.clone(), munch_function_body(ret_typ, params, body)))
       } else {
@@ -59,44 +59,30 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       false
     }
     Stmt::Asgn(var_id, asn_op, expr) => {
-      let assigned_temp = match asn_op {
-        AsnOp::Equal => get_operand_temp(munch_expression(expr, ctx), expr.get_type(), ctx),
-        op => {
-          let op = op.to_binop().unwrap(); // only equality doesn't have binop
+      todo!();
+      // let assigned_temp = match asn_op {
+      //   AsnOp::Equal => get_operand_temp(munch_expression(expr, ctx), expr.get_type(), ctx),
+      //   op => {
+      //     let op = op.to_binop().unwrap(); // only equality doesn't have binop
 
-          let operand_temp = ctx.read_variable(var_id, ctx.current_block_label);
-          let rhs = munch_expression(expr, ctx);
-          let dest = ctx.create_temp(operand_temp.1.clone());
+      //     let operand_temp = ctx.read_variable(var_id, ctx.current_block_label);
+      //     let rhs = munch_expression(expr, ctx);
+      //     let dest = ctx.create_temp(operand_temp.1.clone());
 
-          ctx.add_instr_to_block(Instr::BinOp {
-            op,
-            dest: dest.clone(),
-            lhs: Operand::Temp(operand_temp),
-            rhs,
-          });
+      //     ctx.add_instr_to_block(Instr::BinOp {
+      //       op,
+      //       dest: dest.clone(),
+      //       lhs: Operand::Temp(operand_temp),
+      //       rhs,
+      //     });
 
-          dest
-        }
-      };
+      //     dest
+      //   }
+      // };
 
-      ctx.write_variable(var_id, assigned_temp, ctx.current_block_label);
+      // ctx.write_variable(var_id, assigned_temp, ctx.current_block_label);
 
-      false
-    }
-    Stmt::PostOp(var_id, post_op) => {
-      let operand_temp = ctx.read_variable(var_id, ctx.current_block_label);
-      let dest = ctx.create_temp(operand_temp.1.clone());
-
-      ctx.add_instr_to_block(Instr::BinOp {
-        op: post_op.to_binop(),
-        dest: dest.clone(),
-        lhs: Operand::Temp(operand_temp.clone()),
-        rhs: Operand::Const((1, Typ::Int)), // currently post-ops are only inc/dec
-      });
-
-      ctx.write_variable(var_id, dest, ctx.current_block_label);
-
-      false
+      // false
     }
     Stmt::Cond(expr, if_stmt, else_stmt) => {
       let if_label = ctx.create_block();
@@ -402,6 +388,7 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
         Operand::Temp(dest)
       }
     }
+    _ => todo!(),
   }
 }
 

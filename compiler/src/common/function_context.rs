@@ -71,6 +71,11 @@ impl FunctionContext {
   /// Declare a variable in the current scope.
   pub fn declare_var(&mut self, var: Variable) {
     assert!(var.0 != Typ::Void, "Variable {} cannot be void.", var.1);
+    assert!(
+      !matches!(var.0, Typ::Struct(_)),
+      "Variable {} cannot be of struct value type.",
+      var.1
+    );
 
     assert!(
       !self.is_var_declared(&var.1),
@@ -91,6 +96,11 @@ impl FunctionContext {
   /// Define a variable in the current scope (and declare if fresh).
   pub fn define_var(&mut self, var: Variable) {
     assert!(var.0 != Typ::Void, "Variable {} cannot be void.", var.1);
+    assert!(
+      !matches!(var.0, Typ::Struct(_)),
+      "Variable {} cannot be of struct value type.",
+      var.1
+    );
 
     if self.is_var_declared(&var.1) {
       let existing = self.variables.get_mut(&var.1).unwrap();
