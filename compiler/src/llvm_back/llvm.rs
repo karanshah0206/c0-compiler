@@ -41,6 +41,12 @@ pub fn generate_llvm(
   let mut out = String::new();
   out.push_str("; C0 Compiler\n\n");
 
+  let struct_defs = collect_struct_definitions(header_ast, source_ast);
+  if !struct_defs.is_empty() {
+    out.push_str(&struct_defs.join("\n"));
+    out.push_str("\n\n");
+  }
+
   let header_defined = function_signatures
     .iter()
     .filter_map(|(func_name, func_sig)| {
@@ -68,6 +74,7 @@ pub fn generate_llvm(
   }
 
   let mut needs_abort = false;
+  let mut needs_malloc = false;
   let mut aux_counter = 0usize;
 
   for (func_name, func_ir) in program_ir {
@@ -92,6 +99,7 @@ pub fn generate_llvm(
         &source_defined,
         &return_type,
         &mut needs_abort,
+        &mut needs_malloc,
         &mut aux_counter,
       ));
     }
@@ -104,7 +112,37 @@ pub fn generate_llvm(
     out.push_str("declare void @abort()\n");
   }
 
+  if needs_malloc
+    && (!function_signatures.contains_key("malloc")
+      || source_defined.contains(&"malloc".to_string()))
+  {
+    out.push_str("declare ptr @malloc(i64)\n");
+  }
+
   out
+}
+
+/// Generate LLVM struct type definitions.
+fn collect_struct_definitions(header_ast: &ProgramAST, source_ast: &ProgramAST) -> Vec<String> {
+  let mut seen = HashSet::new();
+  let mut defs = Vec::new();
+
+  for program in [header_ast, source_ast] {
+    for decl in program {
+      if let GlobalDeclaration::SDefn(struct_id, fields) = decl
+        && seen.insert(struct_id.clone())
+      {
+        let fields = fields
+          .iter()
+          .map(|(typ, _)| llvm_type(typ))
+          .collect::<Vec<_>>()
+          .join(", ");
+        defs.push(format!("%struct.{struct_id} = type {{ {fields} }}"));
+      }
+    }
+  }
+
+  defs
 }
 
 /// Generate LLVM function signatures from functions in the source code.
@@ -124,7 +162,7 @@ fn collect_function_signatures(
           },
         );
       }
-      GlobalDeclaration::SDefn(..) => todo!("Pending LLVM lowering of structs"),
+      GlobalDeclaration::SDefn(..) => {}
       GlobalDeclaration::SDecl(..) | GlobalDeclaration::TDefn(..) => {}
     }
   }
@@ -136,8 +174,8 @@ fn llvm_type(typ: &Typ) -> &'static str {
     Typ::Void => "void",
     Typ::Int => "i32",
     Typ::Bool => "i1",
+    Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(..) => "ptr",
     Typ::Typedef(_) => unreachable!("Unresolved typedefs found in LLVM backend."),
-    _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
   }
 }
 
@@ -148,6 +186,7 @@ fn generate_instr(
   source_defined: &HashSet<&Ident>,
   return_type: &Typ,
   needs_abort: &mut bool,
+  needs_malloc: &mut bool,
   aux_counter: &mut usize,
 ) -> String {
   match instr {
@@ -164,6 +203,40 @@ fn generate_instr(
         format!("\t%t{} = {llvm_op} i1 {lhs}, {rhs}\n", dest.0)
       }
       BinOp::CmpEq | BinOp::CmpNeq | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte => {
+        if is_ptr_like(&operand_type(lhs)) || is_ptr_like(&operand_type(rhs)) {
+          let llvm_op = match op {
+            BinOp::CmpEq => "eq",
+            BinOp::CmpNeq => "ne",
+            _ => unreachable!("Pointer comparison only supports equality and inequality."),
+          };
+
+          return format!(
+            "\t%t{} = icmp {llvm_op} ptr {}, {}\n",
+            dest.0,
+            emit_ptr(lhs),
+            emit_ptr(rhs)
+          );
+        }
+
+        if matches!(operand_type(lhs), Typ::Bool) && matches!(operand_type(rhs), Typ::Bool) {
+          let llvm_op = match op {
+            BinOp::CmpEq => "eq",
+            BinOp::CmpNeq => "ne",
+            BinOp::Lt => "slt",
+            BinOp::Gt => "sgt",
+            BinOp::Lte => "sle",
+            BinOp::Gte => "sge",
+            _ => unreachable!(),
+          };
+
+          return format!(
+            "\t%t{} = icmp {llvm_op} i1 {}, {}\n",
+            dest.0,
+            emit_i1(lhs),
+            emit_i1(rhs)
+          );
+        }
+
         let (lhs, lhs_cast) = cast_to_i32(lhs, aux_counter);
         let (rhs, rhs_cast) = cast_to_i32(rhs, aux_counter);
 
@@ -187,6 +260,37 @@ fn generate_instr(
         out
       }
       _ => {
+        if matches!(op, BinOp::Add | BinOp::Sub) {
+          let lhs_typ = operand_type(lhs);
+          let rhs_typ = operand_type(rhs);
+
+          if is_ptr_like(&lhs_typ) || is_ptr_like(&rhs_typ) {
+            let (ptr_op, offset_op, negate) = if is_ptr_like(&lhs_typ) && is_int_like(&rhs_typ) {
+              (lhs, rhs, matches!(op, BinOp::Sub))
+            } else if matches!(op, BinOp::Add) && is_int_like(&lhs_typ) && is_ptr_like(&rhs_typ) {
+              (rhs, lhs, false)
+            } else {
+              unreachable!("Unsupported pointer arithmetic in LLVM lowering.")
+            };
+
+            let (offset, mut prefix) = cast_to_i64(offset_op, aux_counter);
+            let offset = if negate {
+              let neg_aux = format!("%aux{}", *aux_counter);
+              *aux_counter += 1;
+              prefix.push_str(&format!("\t{neg_aux} = sub i64 0, {offset}\n"));
+              neg_aux
+            } else {
+              offset
+            };
+
+            return format!(
+              "{prefix}\t%t{} = getelementptr inbounds i8, ptr {}, i64 {offset}\n",
+              dest.0,
+              emit_ptr(ptr_op)
+            );
+          }
+        }
+
         let lhs = emit_i32(lhs);
         let rhs = emit_i32(rhs);
 
@@ -296,18 +400,56 @@ fn generate_instr(
       match &dest.1 {
         Typ::Bool => format!("\t%t{} = or i1 {src}, false\n", dest.0).to_string(),
         Typ::Int => format!("\t%t{} = add i32 {src}, 0\n", dest.0).to_string(),
+        Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(..) => {
+          format!("\t%t{} = select i1 true, ptr {src}, ptr null\n", dest.0)
+        }
         Typ::Void => unreachable!("Typechecker erroneously allows operands to be of type void."),
         Typ::Typedef(typedef) => {
           unreachable!("Unresolved typedef {typedef} found in LLVM backend.")
         }
-        _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
       }
     }
-    Instr::Load { .. }
-    | Instr::Store { .. }
-    | Instr::Alloc { .. }
-    | Instr::AllocArray { .. } => {
-      todo!("Pending LLVM implementation for pointers, structs, and arrays.")
+    Instr::Load { .. } | Instr::Store { .. } | Instr::Alloc { .. } | Instr::AllocArray { .. } => {
+      match instr {
+        Instr::Load { dest, addr } => {
+          format!(
+            "\t%t{} = load {}, ptr {}\n",
+            dest.0,
+            llvm_type(&dest.1),
+            emit_ptr(addr)
+          )
+        }
+        Instr::Store { addr, src } => {
+          format!(
+            "\tstore {} {}, ptr {}\n",
+            llvm_type(&operand_type(src)),
+            emit_operand_of_typ(src, &operand_type(src)),
+            emit_ptr(addr)
+          )
+        }
+        Instr::Alloc { dest, size } => {
+          *needs_malloc = true;
+          format!(
+            "\t%t{} = call ptr @malloc(i64 {})\n",
+            dest.0,
+            cast_to_i64(size, aux_counter).0
+          )
+        }
+        Instr::AllocArray { dest, size, count } => {
+          *needs_malloc = true;
+          let (size, mut prefix): (String, String) = cast_to_i64(size, aux_counter);
+          let (count, count_prefix): (String, String) = cast_to_i64(count, aux_counter);
+          prefix.push_str(&count_prefix);
+          let bytes_aux = format!("%aux{}", *aux_counter);
+          *aux_counter += 1;
+          prefix.push_str(&format!("\t{bytes_aux} = mul i64 {size}, {count}\n"));
+          format!(
+            "{prefix}\t%t{} = call ptr @malloc(i64 {bytes_aux})\n",
+            dest.0
+          )
+        }
+        _ => unreachable!(),
+      }
     }
   }
 }
@@ -317,9 +459,9 @@ fn emit_operand_of_typ(op: &Operand, typ: &Typ) -> String {
   match typ {
     Typ::Bool => emit_i1(op),
     Typ::Int => emit_i32(op),
+    Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(..) => emit_ptr(op),
     Typ::Void => unreachable!("Typechecker erroneously allows operands to be of type void."),
     Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
-    _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
   }
 }
 
@@ -334,11 +476,11 @@ fn emit_const_of_typ(value: i64, typ: &Typ) -> String {
       }
     }
     Typ::Int => value.to_string(),
+    Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(..) => "null".to_string(),
     Typ::Void => {
       unreachable!("Typechecker erroneously permits constants assigned to the void type.")
     }
     Typ::Typedef(typedef) => unreachable!("Unresolved typedef {typedef} found in LLVM backend."),
-    _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
   }
 }
 
@@ -388,5 +530,65 @@ fn cast_to_i32(op: &Operand, aux_counter: &mut usize) -> (String, String) {
       Typ::Int => (format!("%t{id}"), String::new()),
       _ => unreachable!("Bad typecast to boolean in LLVM code generation."),
     },
+  }
+}
+
+/// Stringify an operand as an i64.
+fn cast_to_i64(op: &Operand, aux_counter: &mut usize) -> (String, String) {
+  match op {
+    Operand::Const((value, _)) => (value.to_string(), String::new()),
+    Operand::Temp((id, typ)) => match typ {
+      Typ::Bool => {
+        let temp_casted = format!("%aux{}", *aux_counter);
+        *aux_counter += 1;
+        (
+          temp_casted.clone(),
+          format!("\t{temp_casted} = zext i1 %t{id} to i64\n"),
+        )
+      }
+      Typ::Int => {
+        let temp_casted = format!("%aux{}", *aux_counter);
+        *aux_counter += 1;
+        (
+          temp_casted.clone(),
+          format!("\t{temp_casted} = sext i32 %t{id} to i64\n"),
+        )
+      }
+      _ => unreachable!("Bad typecast to i64 in LLVM code generation."),
+    },
+  }
+}
+
+/// Get the type of an operand.
+fn operand_type(op: &Operand) -> Typ {
+  match op {
+    Operand::Const((_, typ)) | Operand::Temp((_, typ)) => typ.clone(),
+  }
+}
+
+/// Check whether a type should be treated as a pointer/reference in LLVM lowering.
+fn is_ptr_like(typ: &Typ) -> bool {
+  matches!(
+    typ,
+    Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(_)
+  )
+}
+
+/// Check whether a type is integer-like for pointer arithmetic.
+fn is_int_like(typ: &Typ) -> bool {
+  matches!(typ, Typ::Int | Typ::Bool)
+}
+
+/// Stringify a pointer-like operand.
+fn emit_ptr(op: &Operand) -> String {
+  match op {
+    Operand::Const((value, _)) => {
+      if *value == 0 {
+        "null".to_string()
+      } else {
+        format!("inttoptr (i64 {value} to ptr)")
+      }
+    }
+    Operand::Temp((id, _)) => format!("%t{id}"),
   }
 }
