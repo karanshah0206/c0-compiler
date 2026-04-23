@@ -12,14 +12,14 @@ pub type ProgramIR = HashMap<Ident, IRContext>;
 
 /// Perform a convenient munch on the ASTs of defined functions in the source program.
 /// Generate an SSA IR using Braun et al.'s technique.
-pub fn munch_program(ast: &ProgramAST, symbol_table: &SymbolTable) -> ProgramIR {
+pub fn munch_program(ast: &ProgramAST, st: &SymbolTable) -> ProgramIR {
   ast
     .iter()
     .filter_map(|decl| {
       if let GlobalDeclaration::FDefn(ret_typ, name, params, body) = decl
-        && symbol_table.is_function_defined(name)
+        && st.is_function_defined(name)
       {
-        Some((name.clone(), munch_function_body(ret_typ, params, body)))
+        Some((name.clone(), munch_function_body(ret_typ, params, body, st)))
       } else {
         None
       }
@@ -28,7 +28,7 @@ pub fn munch_program(ast: &ProgramAST, symbol_table: &SymbolTable) -> ProgramIR 
 }
 
 /// Transform a function's AST into IR.
-fn munch_function_body(typ: &Typ, params: &[Variable], body: &Stmt) -> IRContext {
+fn munch_function_body(typ: &Typ, params: &[Variable], body: &Stmt, st: &SymbolTable) -> IRContext {
   let mut ctx = IRContext::new();
 
   // parameters are treated as defined in the entry block.
@@ -38,7 +38,7 @@ fn munch_function_body(typ: &Typ, params: &[Variable], body: &Stmt) -> IRContext
     ctx.write_variable(param_id, temp, entry_label);
   }
 
-  if !munch_statement(body, &mut ctx) && *typ == Typ::Void {
+  if !munch_statement(body, &mut ctx, st) && *typ == Typ::Void {
     // implicit void return
     ctx.set_block_terminator(Instr::Return(None));
   }
@@ -50,39 +50,66 @@ fn munch_function_body(typ: &Typ, params: &[Variable], body: &Stmt) -> IRContext
 
 /// Transform an AST statement into an IR instruction.
 /// Returns `true` if statement is terminal.
-fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
+fn munch_statement(stmt: &Stmt, ctx: &mut IRContext, st: &SymbolTable) -> bool {
   match stmt {
     Stmt::Decl(_) | Stmt::NoOp() => false,
     Stmt::Defn((var_typ, var_id), expr) => {
-      let dest = get_operand_temp(munch_expression(expr, ctx), var_typ.clone(), ctx);
+      let dest = get_operand_temp(munch_expression(expr, ctx, st), var_typ.clone(), ctx);
       ctx.write_variable(var_id, dest, ctx.current_block_label);
       false
     }
-    Stmt::Asgn(var_id, asn_op, expr) => {
-      todo!();
-      // let assigned_temp = match asn_op {
-      //   AsnOp::Equal => get_operand_temp(munch_expression(expr, ctx), expr.get_type(), ctx),
-      //   op => {
-      //     let op = op.to_binop().unwrap(); // only equality doesn't have binop
+    Stmt::Asgn(lhs, asn_op, expr) => {
+      if *asn_op == AsnOp::Equal
+        && let Some((decl_typ, var_id)) = resolve_pointer_mul_ambiguity(lhs, st)
+      {
+        let dest = get_operand_temp(munch_expression(expr, ctx, st), decl_typ, ctx);
+        ctx.write_variable(&var_id, dest, ctx.current_block_label);
+        return false;
+      }
 
-      //     let operand_temp = ctx.read_variable(var_id, ctx.current_block_label);
-      //     let rhs = munch_expression(expr, ctx);
-      //     let dest = ctx.create_temp(operand_temp.1.clone());
+      if let Expr::Variable(var_id, _) = lhs {
+        let assigned_temp = match asn_op {
+          AsnOp::Equal => get_operand_temp(munch_expression(expr, ctx, st), expr.get_type(), ctx),
+          op => {
+            let op = op.to_binop().unwrap();
+            let lhs_temp = ctx.read_variable(var_id, ctx.current_block_label);
+            let rhs = munch_expression(expr, ctx, st);
+            let dest = ctx.create_temp(lhs_temp.1.clone());
 
-      //     ctx.add_instr_to_block(Instr::BinOp {
-      //       op,
-      //       dest: dest.clone(),
-      //       lhs: Operand::Temp(operand_temp),
-      //       rhs,
-      //     });
+            ctx.add_instr_to_block(Instr::BinOp {
+              op,
+              dest: dest.clone(),
+              lhs: Operand::Temp(lhs_temp),
+              rhs,
+            });
 
-      //     dest
-      //   }
-      // };
+            dest
+          }
+        };
 
-      // ctx.write_variable(var_id, assigned_temp, ctx.current_block_label);
+        ctx.write_variable(var_id, assigned_temp, ctx.current_block_label);
+      } else {
+        let value = match asn_op {
+          AsnOp::Equal => munch_expression(expr, ctx, st),
+          op => {
+            let lhs_val = munch_expression(lhs, ctx, st);
+            let rhs = munch_expression(expr, ctx, st);
+            let dest = ctx.create_temp(lhs.get_type());
+            ctx.add_instr_to_block(Instr::BinOp {
+              op: op.to_binop().unwrap(),
+              dest: dest.clone(),
+              lhs: lhs_val,
+              rhs,
+            });
+            Operand::Temp(dest)
+          }
+        };
 
-      // false
+        let addr = munch_lvalue_address(lhs, ctx, st);
+        ctx.add_instr_to_block(Instr::Store { addr, src: value });
+      }
+
+      false
     }
     Stmt::Cond(expr, if_stmt, else_stmt) => {
       let if_label = ctx.create_block();
@@ -91,7 +118,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
 
       // evaluate condition block (which is the current block)
       let condition_label = ctx.current_block_label;
-      let condition = munch_expression(expr, ctx);
+      let condition = munch_expression(expr, ctx, st);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: if_label,
@@ -102,7 +129,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.switch_to_block(if_label);
       ctx.add_pred_to_block(condition_label);
       ctx.seal_block(if_label); // only predecessor is predecessor
-      let if_terminated = munch_statement(if_stmt, ctx);
+      let if_terminated = munch_statement(if_stmt, ctx, st);
       let if_end_label = ctx.current_block_label;
       if !if_terminated {
         ctx.set_block_terminator(Instr::JumpTo(merge_label));
@@ -112,7 +139,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.switch_to_block(else_label);
       ctx.add_pred_to_block(condition_label);
       ctx.seal_block(else_label); // only predecessor is predecessor
-      let else_terminated = munch_statement(else_stmt, ctx);
+      let else_terminated = munch_statement(else_stmt, ctx, st);
       let else_end_label = ctx.current_block_label;
       if !else_terminated {
         ctx.set_block_terminator(Instr::JumpTo(merge_label));
@@ -145,7 +172,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.set_block_terminator(Instr::JumpTo(header_label));
       ctx.switch_to_block(header_label);
       ctx.add_pred_to_block(parent_label);
-      let condition = munch_expression(expr, ctx);
+      let condition = munch_expression(expr, ctx, st);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: body_label,
@@ -159,7 +186,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.seal_block(body_label); // only predecessor is header_end block
 
       // if loop body is not guaranteed to terminate, we have back-edge to header
-      if !munch_statement(body_stmt, ctx) {
+      if !munch_statement(body_stmt, ctx, st) {
         let body_end_label = ctx.current_block_label;
         ctx.set_block_terminator(Instr::JumpTo(header_label)); // add back-edge
         ctx.switch_to_block(header_label); // go back to header
@@ -178,7 +205,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
     Stmt::For(init_stmt, expr, step_stmt, body_stmt) => {
       // evaluate loop initializer
       if let Some(init_stmt) = init_stmt.as_ref()
-        && munch_statement(init_stmt, ctx)
+        && munch_statement(init_stmt, ctx, st)
       {
         // if loop initializer terminates, no need to evaluate the rest of the loop
         return true;
@@ -194,7 +221,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.set_block_terminator(Instr::JumpTo(header_label));
       ctx.switch_to_block(header_label);
       ctx.add_pred_to_block(parent_label);
-      let condition = munch_expression(expr, ctx);
+      let condition = munch_expression(expr, ctx, st);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: body_label,
@@ -206,7 +233,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       ctx.switch_to_block(body_label);
       ctx.add_pred_to_block(header_end_label);
       ctx.seal_block(body_label); // only predecessor is header_end block
-      if !munch_statement(body_stmt, ctx) {
+      if !munch_statement(body_stmt, ctx, st) {
         // if loop body doesn't terminate, we add an edge from it to step block
         let body_end_label = ctx.current_block_label;
         ctx.set_block_terminator(Instr::JumpTo(step_label));
@@ -215,7 +242,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
         ctx.seal_block(step_label); // only predecessor is body_end block
 
         let step_terminates = if let Some(step_stmt) = step_stmt.as_ref() {
-          munch_statement(step_stmt, ctx)
+          munch_statement(step_stmt, ctx, st)
         } else {
           false
         };
@@ -241,7 +268,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
     Stmt::Block(stmts) => {
       let mut terminates = false;
       for stmt in stmts {
-        terminates = munch_statement(stmt, ctx);
+        terminates = munch_statement(stmt, ctx, st);
         if terminates {
           break;
         }
@@ -249,12 +276,14 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
       terminates
     }
     Stmt::Ret(expr) => {
-      let return_operand = expr.as_ref().map(|expr| munch_expression(expr, ctx));
+      let return_operand = expr.as_ref().map(|expr| munch_expression(expr, ctx, st));
       ctx.set_block_terminator(Instr::Return(return_operand));
       true
     }
     Stmt::Expr(expr) => {
-      munch_expression(expr, ctx);
+      if resolve_pointer_mul_ambiguity(expr, st).is_none() {
+        munch_expression(expr, ctx, st);
+      }
       false
     }
     Stmt::Assert(expr) => {
@@ -263,7 +292,7 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
 
       // evaluate condition
       let parent_label = ctx.current_block_label;
-      let condition = munch_expression(expr, ctx);
+      let condition = munch_expression(expr, ctx, st);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: pass_label,
@@ -287,16 +316,17 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext) -> bool {
 }
 
 /// Transform expressions in AST to IR instructions
-fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
+fn munch_expression(expr: &Expr, ctx: &mut IRContext, st: &SymbolTable) -> Operand {
   match expr {
     Expr::Number(number) => Operand::Const((*number, Typ::Int)),
     Expr::Bool(boolean) => Operand::Const((if *boolean { 1 } else { 0 }, Typ::Bool)),
+    Expr::Null => Operand::Const((0, Typ::Pointer(Box::new(Typ::Int), 1))),
     Expr::Variable(var_id, _) => Operand::Temp(ctx.read_variable(var_id, ctx.current_block_label)),
     Expr::Binop(lhs, bin_op, rhs, typ) => match bin_op {
-      BinOp::LAnd | BinOp::LOr => short_circuit_binop(bin_op, lhs, rhs, typ, expr, ctx),
+      BinOp::LAnd | BinOp::LOr => short_circuit_binop(bin_op, lhs, rhs, typ, expr, ctx, st),
       _ => {
-        let lhs = munch_expression(lhs, ctx);
-        let rhs = munch_expression(rhs, ctx);
+        let lhs = munch_expression(lhs, ctx, st);
+        let rhs = munch_expression(rhs, ctx, st);
 
         let dest = ctx.create_temp(typ.clone().unwrap_or_else(|| expr.get_type()));
 
@@ -311,7 +341,7 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
       }
     },
     Expr::Unop(un_op, expr, typ) => {
-      let src = munch_expression(expr, ctx);
+      let src = munch_expression(expr, ctx, st);
       let dest = ctx.create_temp(typ.clone().unwrap_or_else(|| expr.get_type()));
       ctx.add_instr_to_block(Instr::UnOp {
         op: *un_op,
@@ -327,7 +357,7 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
 
       // evaluate condition expression
       let parent_label = ctx.current_block_label;
-      let condition = munch_expression(condition_expr, ctx);
+      let condition = munch_expression(condition_expr, ctx, st);
       ctx.set_block_terminator(Instr::JumpIf {
         pred: condition,
         holds: if_label,
@@ -338,7 +368,7 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
       ctx.switch_to_block(if_label);
       ctx.add_pred_to_block(parent_label);
       ctx.seal_block(if_label); // only one predecessor in parent
-      let if_operand = munch_expression(if_expr, ctx);
+      let if_operand = munch_expression(if_expr, ctx, st);
       let if_end_label = ctx.current_block_label;
       ctx.set_block_terminator(Instr::JumpTo(merge_label));
 
@@ -346,7 +376,7 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
       ctx.switch_to_block(else_label);
       ctx.add_pred_to_block(parent_label);
       ctx.seal_block(else_label); // only one predecessor in parent
-      let else_operand = munch_expression(else_expr, ctx);
+      let else_operand = munch_expression(else_expr, ctx, st);
       let else_end_label = ctx.current_block_label;
       ctx.set_block_terminator(Instr::JumpTo(merge_label));
 
@@ -366,7 +396,7 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
     Expr::Call(func_id, args, typ) => {
       let args = args
         .iter()
-        .map(|arg| munch_expression(arg, ctx))
+        .map(|arg| munch_expression(arg, ctx, st))
         .collect::<Vec<_>>();
 
       let result_typ = typ.clone().unwrap_or_else(|| expr.get_type());
@@ -388,7 +418,33 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext) -> Operand {
         Operand::Temp(dest)
       }
     }
-    _ => todo!(),
+    Expr::Deref(..) | Expr::ArrayIndex(..) | Expr::StructDeref(..) => {
+      let addr = munch_lvalue_address(expr, ctx, st);
+      let dest = ctx.create_temp(expr.get_type());
+      ctx.add_instr_to_block(Instr::Load {
+        dest: dest.clone(),
+        addr,
+      });
+      Operand::Temp(dest)
+    }
+    Expr::Alloc(alloc_typ, _) => {
+      let dest = ctx.create_temp(expr.get_type());
+      ctx.add_instr_to_block(Instr::Alloc {
+        dest: dest.clone(),
+        size: Operand::Const((type_size_bytes(alloc_typ, st), Typ::Int)),
+      });
+      Operand::Temp(dest)
+    }
+    Expr::AllocArray(elem_typ, size_expr, _) => {
+      let dest = ctx.create_temp(expr.get_type());
+      let count = munch_expression(size_expr, ctx, st);
+      ctx.add_instr_to_block(Instr::AllocArray {
+        dest: dest.clone(),
+        size: Operand::Const((type_size_bytes(elem_typ, st), Typ::Int)),
+        count,
+      });
+      Operand::Temp(dest)
+    }
   }
 }
 
@@ -402,13 +458,14 @@ fn short_circuit_binop(
   typ: &Option<Typ>,
   whole_expr: &Expr,
   ctx: &mut IRContext,
+  st: &SymbolTable,
 ) -> Operand {
   let rhs_label = ctx.create_block();
   let short_circuit_label = ctx.create_block();
   let merge_label = ctx.create_block();
 
   let parent_label = ctx.current_block_label;
-  let lhs = munch_expression(lhs, ctx); // both 
+  let lhs = munch_expression(lhs, ctx, st); // both 
 
   match bin_op {
     BinOp::LAnd => ctx.set_block_terminator(Instr::JumpIf {
@@ -428,7 +485,7 @@ fn short_circuit_binop(
   ctx.switch_to_block(rhs_label);
   ctx.add_pred_to_block(parent_label);
   ctx.seal_block(rhs_label); // only predecessor is short-circuit parent
-  let rhs_operand = munch_expression(rhs, ctx);
+  let rhs_operand = munch_expression(rhs, ctx, st);
   let rhs_end_label = ctx.current_block_label;
   ctx.set_block_terminator(Instr::JumpTo(merge_label));
 
@@ -459,6 +516,159 @@ fn short_circuit_binop(
   });
 
   Operand::Temp(dest)
+}
+
+/// Compute address operand for l-value expression nodes.
+fn munch_lvalue_address(expr: &Expr, ctx: &mut IRContext, st: &SymbolTable) -> Operand {
+  match expr {
+    Expr::Deref(pointer_expr, depth, _) => {
+      let mut addr = munch_expression(pointer_expr, ctx, st);
+      for _ in 1..*depth {
+        let loaded_typ = deref_once_type(&operand_type(&addr));
+        let dest = ctx.create_temp(loaded_typ);
+        ctx.add_instr_to_block(Instr::Load {
+          dest: dest.clone(),
+          addr,
+        });
+        addr = Operand::Temp(dest);
+      }
+      addr
+    }
+    Expr::ArrayIndex(array_expr, index_expr, typ) => {
+      let base = munch_expression(array_expr, ctx, st);
+      let index = munch_expression(index_expr, ctx, st);
+      let elem_size = Operand::Const((
+        type_size_bytes(&typ.clone().unwrap_or_else(|| expr.get_type()), st),
+        Typ::Int,
+      ));
+
+      let scaled = match index {
+        Operand::Const((value, _)) => Operand::Const((
+          value * type_size_bytes(&typ.clone().unwrap_or_else(|| expr.get_type()), st),
+          Typ::Int,
+        )),
+        _ => {
+          let tmp = ctx.create_temp(Typ::Int);
+          ctx.add_instr_to_block(Instr::BinOp {
+            op: BinOp::Mul,
+            dest: tmp.clone(),
+            lhs: index,
+            rhs: elem_size,
+          });
+          Operand::Temp(tmp)
+        }
+      };
+
+      let dest = ctx.create_temp(operand_type(&base));
+      ctx.add_instr_to_block(Instr::BinOp {
+        op: BinOp::Add,
+        dest: dest.clone(),
+        lhs: base,
+        rhs: scaled,
+      });
+      Operand::Temp(dest)
+    }
+    Expr::StructDeref(struct_expr, field_id, _) => {
+      let base_addr = munch_lvalue_address(struct_expr, ctx, st);
+      let struct_typ = struct_expr.get_type();
+      let struct_id = match struct_typ {
+        Typ::Struct(struct_id) => struct_id,
+        _ => unreachable!("Expected struct type in StructDeref lowering."),
+      };
+
+      let mut offset = 0;
+      for (field_typ, id) in st
+        .get_struct_fields(&struct_id)
+        .unwrap_or_else(|| unreachable!("Unknown struct {struct_id} in IR lowering."))
+      {
+        if id == field_id {
+          break;
+        }
+        offset += type_size_bytes(field_typ, st);
+      }
+
+      let dest = ctx.create_temp(operand_type(&base_addr));
+      ctx.add_instr_to_block(Instr::BinOp {
+        op: BinOp::Add,
+        dest: dest.clone(),
+        lhs: base_addr,
+        rhs: Operand::Const((offset, Typ::Int)),
+      });
+      Operand::Temp(dest)
+    }
+    _ => unreachable!("Invalid lvalue expression in IR lowering."),
+  }
+}
+
+fn operand_type(op: &Operand) -> Typ {
+  match op {
+    Operand::Const((_, typ)) => typ.clone(),
+    Operand::Temp((_, typ)) => typ.clone(),
+  }
+}
+
+fn deref_once_type(typ: &Typ) -> Typ {
+  match typ {
+    Typ::Pointer(inner, depth) => {
+      if *depth > 1 {
+        Typ::Pointer(inner.clone(), depth - 1)
+      } else {
+        *inner.clone()
+      }
+    }
+    _ => unreachable!("Attempted dereferencing non-pointer type {typ} in IR generation."),
+  }
+}
+
+fn type_size_bytes(typ: &Typ, symbol_table: &SymbolTable) -> i64 {
+  match typ {
+    Typ::Int => 4,
+    Typ::Bool => 1,
+    Typ::Pointer(..) | Typ::Array(..) => 8,
+    Typ::Struct(struct_id) => symbol_table
+      .get_struct_fields(struct_id)
+      .unwrap_or_else(|| {
+        unreachable!("Attempted size evaluation of unknown struct {struct_id} in IR generation.")
+      })
+      .iter()
+      .map(|(field_typ, _)| type_size_bytes(field_typ, symbol_table))
+      .sum(),
+    Typ::Void | Typ::Null | Typ::Typedef(_) => {
+      unreachable!("Attempted size evaluation of invalid type {typ} in IR generation.")
+    }
+  }
+}
+
+fn resolve_pointer_mul_ambiguity(expr: &Expr, st: &SymbolTable) -> Option<Variable> {
+  match expr {
+    Expr::Binop(lhs, BinOp::Mul, rhs, _) => {
+      if let Expr::Variable(id, _) = lhs.as_ref()
+        && st.is_typedef(id)
+      {
+        let (var_id, pointer_depth) = get_pointer_var_depth(rhs)?;
+        let typedef_expr = Typ::Typedef(id.clone());
+        let pointer = if let Typ::Pointer(inner, depth) = typedef_expr {
+          Typ::Pointer(inner, depth + pointer_depth + 1)
+        } else {
+          Typ::Pointer(Box::new(typedef_expr), pointer_depth + 1)
+        };
+        Some((pointer, var_id))
+      } else {
+        None
+      }
+    }
+    _ => None,
+  }
+}
+
+fn get_pointer_var_depth(expr: &Expr) -> Option<(Ident, usize)> {
+  match expr {
+    Expr::Variable(var, _) => Some((var.clone(), 0)),
+    Expr::Deref(inner, depth, _) => {
+      get_pointer_var_depth(inner).map(|(var, inner_depth)| (var, inner_depth + depth))
+    }
+    _ => None,
+  }
 }
 
 /// Ensure that an operand is mapped to a temp and return the temp.
