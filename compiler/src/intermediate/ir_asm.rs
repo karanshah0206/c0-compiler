@@ -66,9 +66,21 @@ pub enum Instr {
   },
   /// Copy value from source operand to dest temporary
   Move { dest: Temp, src: Operand },
+  /// Load value from memory address
+  Load { dest: Temp, addr: Operand },
+  /// Store value to memory address
+  Store { addr: Operand, src: Operand },
+  /// Heap allocation of a given size in bytes
+  Alloc { dest: Temp, size: Operand },
+  /// Heap allocation of a contiguous memory block
+  AllocArray {
+    dest: Temp,
+    size: Operand,
+    count: Operand,
+  },
 }
 
-// Implementing display for types in AST, useful when compiler is passed the `--dump-ir` flag.
+// Implementing display for types in IR, useful when compiler is passed the `--dump-ir` flag.
 
 impl Display for Operand {
   fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
@@ -142,6 +154,14 @@ impl Display for Instr {
         )
       }
       Instr::Move { dest, src } => write!(fmt, "T{} <- {src}", dest.0),
+      Instr::Load { dest, addr } => write!(fmt, "T{} <- *{addr}", dest.0),
+      Instr::Store { addr, src } => write!(fmt, "*{addr} <- {src}"),
+      Instr::Alloc { dest, size } => write!(fmt, "T{} <- ALLOC({size})", dest.0),
+      Instr::AllocArray {
+        dest,
+        size: elem_size,
+        count,
+      } => write!(fmt, "T{} <- ALLOC_ARRAY({elem_size}, {count})", dest.0),
     }
   }
 }

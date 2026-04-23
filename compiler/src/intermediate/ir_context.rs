@@ -313,6 +313,18 @@ impl IRContext {
         }
       }
       Instr::Move { src, .. } => resolve_op(src),
+      Instr::Load { addr, .. } => resolve_op(addr),
+      Instr::Store { addr, src } => {
+        resolve_op(addr);
+        resolve_op(src);
+      }
+      Instr::Alloc { size, .. } => resolve_op(size),
+      Instr::AllocArray {
+        size: elem_size, count, ..
+      } => {
+        resolve_op(elem_size);
+        resolve_op(count);
+      }
     };
 
     for block in self.blocks.values_mut() {

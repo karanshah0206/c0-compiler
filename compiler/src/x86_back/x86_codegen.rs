@@ -257,6 +257,12 @@ fn generate_function(
       }
       // SSA deconstruction should ensure Phi never gets here
       Instr::Phi { .. } => unreachable!("Not expecting Phi instructions in x86 codegen."),
+      Instr::Load { .. }
+      | Instr::Store { .. }
+      | Instr::Alloc { .. }
+      | Instr::AllocArray { .. } => {
+        todo!("Pending x86 lowering for pointers, structs, and arrays.")
+      }
     };
   }
 

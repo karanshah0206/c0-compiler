@@ -303,6 +303,12 @@ fn generate_instr(
         _ => todo!("Pending LLVM implementation for pointers, structs, and arrays."),
       }
     }
+    Instr::Load { .. }
+    | Instr::Store { .. }
+    | Instr::Alloc { .. }
+    | Instr::AllocArray { .. } => {
+      todo!("Pending LLVM implementation for pointers, structs, and arrays.")
+    }
   }
 }
 
