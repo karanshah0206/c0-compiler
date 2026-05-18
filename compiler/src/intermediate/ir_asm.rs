@@ -19,8 +19,6 @@ pub enum Operand {
 pub enum Exception {
   /// Forceful termination exception
   Abort,
-  /// Arithmetic exception
-  Arith,
 }
 
 /// Label identified by a unique integer.
@@ -104,7 +102,6 @@ impl Display for Exception {
   fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
     match self {
       Exception::Abort => write!(fmt, "ABORT"),
-      Exception::Arith => write!(fmt, "ARITH"),
     }
   }
 }
