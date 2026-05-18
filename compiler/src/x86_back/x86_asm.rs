@@ -27,7 +27,7 @@ impl X86Reg {
   /// Position in array corresponds to color for register allocation.
   pub fn allocatable() -> Vec<Self> {
     vec![
-      Rax, Rbx, Rcx, Rdx, Rdi, Rsi, R8, R9, R11, R12, R13, R14, R15, Rbp,
+      Rax, Rbx, Rcx, Rdx, Rdi, Rsi, R8, R9, R12, R13, R14, R15, Rbp,
     ]
   }
 
@@ -119,6 +119,14 @@ impl X86WReg {
       width,
     }
   }
+
+  /// Register reserved exclusively for scratch/swap.
+  pub fn scratch2(width: Width) -> Self {
+    X86WReg {
+      register: R11,
+      width,
+    }
+  }
 }
 
 /// Immediate/numeric literal operand.
@@ -149,6 +157,17 @@ impl StackVar {
   }
 }
 
+/// Temporary stored on the heap.
+#[derive(Clone, Copy, PartialEq)]
+pub struct MemVar {
+  /// Base register used in effective address computation.
+  pub base: X86Reg,
+  /// Displacement from base register.
+  pub offset: i64,
+  /// Width of the data type in memory.
+  pub width: Width,
+}
+
 /// Operand to x86-64 instructions.
 #[derive(Clone, Copy, PartialEq)]
 pub enum X86Operand {
@@ -156,6 +175,8 @@ pub enum X86Operand {
   Register(X86WReg),
   /// Operand stored on the stack.
   Stack(StackVar),
+  /// Operand stored on the heap.
+  Memory(MemVar),
   /// Operand that is an immediate/compile-time constant.
   Immediate(Immediate),
 }
@@ -167,9 +188,23 @@ impl X86Operand {
     match self {
       Register(register) => register.width,
       Stack(stack_var) => stack_var.width,
+      Memory(mem_var) => mem_var.width,
       Immediate(immediate) => immediate.width,
     }
   }
+}
+
+/// Addressing format for lea.
+#[derive(Clone, Copy, PartialEq)]
+pub struct LeaAddr {
+  /// Optional base register.
+  pub base: Option<X86Reg>,
+  /// Optional index register.
+  pub index: Option<X86Reg>,
+  /// Scale for index register.
+  pub scale: u8,
+  /// Displacement from the effective address.
+  pub disp: i32,
 }
 
 /// x86-64 assembly instructions.
@@ -205,6 +240,8 @@ pub enum X86Instr {
   Cqo(Width),
   /// cmp src, dest
   Cmp(X86Operand, X86Operand),
+  /// test src, dest
+  Test(X86Operand, X86Operand),
   /// sete dest
   Sete(X86Operand),
   /// setne dest
@@ -217,22 +254,24 @@ pub enum X86Instr {
   Setle(X86Operand),
   /// setge dest
   Setge(X86Operand),
-  /// push src
-  Push(X86Operand),
-  /// pop dest
-  Pop(X86Operand),
   /// jmp label
   Jmp(String),
   /// jne label
   Jne(String),
+  /// je label
+  Je(String),
   /// jl label
   Jl(String),
   // jg label
   Jg(String),
+  /// jle label
+  Jle(String),
   /// call `function_name`
   Call(String),
   /// ret
   Ret,
+  /// lea src, dest
+  Lea(LeaAddr, X86WReg),
 }
 use X86Instr::*;
 
@@ -318,6 +357,15 @@ impl Display for X86Operand {
     match self {
       Register(register) => write!(fmt, "%{register}"),
       Stack(stack_var) => write!(fmt, "{}(%{})", stack_var.offset, X86WReg::stack_pointer()),
+      Memory(mem_var) => write!(
+        fmt,
+        "{}(%{})",
+        mem_var.offset,
+        X86WReg {
+          register: mem_var.base,
+          width: W64,
+        }
+      ),
       Immediate(immediate) => write!(fmt, "${}", immediate.value),
     }
   }
@@ -335,6 +383,7 @@ impl Display for X86Instr {
     match self {
       Label(label) => write!(fmt, "{label}:"),
       Mov(s, d) => write!(fmt, "\tmov{}\t{s}, {d}", suf(d.width())),
+      Lea(s, d) => write!(fmt, "\tlea{}\t{}, %{}", suf(d.width), *s, d),
       Add(s, d) => write!(fmt, "\tadd{}\t{s}, {d}", suf(d.width())),
       Sub(s, d) => write!(fmt, "\tsub{}\t{s}, {d}", suf(d.width())),
       IMul(i, s, d) => match i {
@@ -372,20 +421,51 @@ impl Display for X86Instr {
         W64 => write!(fmt, "\tcqo"),
       },
       Cmp(s, d) => write!(fmt, "\tcmp{}\t{s}, {d}", suf(d.width())),
+      Test(s, d) => write!(fmt, "\ttest{}\t{s}, {d}", suf(d.width())),
       Sete(d) => write!(fmt, "\tsete\t{d}"),
       Setne(d) => write!(fmt, "\tsetne\t{d}"),
       Setl(d) => write!(fmt, "\tsetl\t{d}"),
       Setg(d) => write!(fmt, "\tsetg\t{d}"),
       Setle(d) => write!(fmt, "\tsetle\t{d}"),
       Setge(d) => write!(fmt, "\tsetge\t{d}"),
-      Push(s) => write!(fmt, "\tpush{}\t{s}", suf(s.width())),
-      Pop(d) => write!(fmt, "\tpop{}\t{d}", suf(d.width())),
       Jmp(label) => write!(fmt, "\tjmp\t{label}"),
       Jne(label) => write!(fmt, "\tjne\t{label}"),
+      Je(label) => write!(fmt, "\tje\t{label}"),
       Jl(label) => write!(fmt, "\tjl\t{label}"),
       Jg(label) => write!(fmt, "\tjg\t{label}"),
+      Jle(label) => write!(fmt, "\tjle\t{label}"),
       Call(name) => write!(fmt, "\tcall\t{name}"),
       Ret => write!(fmt, "\tret"),
+    }
+  }
+}
+
+impl Display for LeaAddr {
+  fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
+    let base = self.base.map(|register| {
+      format!(
+        "%{}",
+        X86WReg {
+          register,
+          width: W64,
+        }
+      )
+    });
+    let index = self.index.map(|register| {
+      format!(
+        "%{}",
+        X86WReg {
+          register,
+          width: W64,
+        }
+      )
+    });
+
+    match (base, index) {
+      (Some(base), Some(index)) => write!(fmt, "{}({base},{index},{})", self.disp, self.scale),
+      (Some(base), None) => write!(fmt, "{}({base})", self.disp),
+      (None, Some(index)) => write!(fmt, "{}(,{index},{})", self.disp, self.scale),
+      (None, None) => write!(fmt, "{}", self.disp),
     }
   }
 }
