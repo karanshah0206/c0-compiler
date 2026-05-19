@@ -78,18 +78,6 @@ fn main() {
         }
       }
 
-      if config.verbose {
-        println!(
-          "Lexing: {}us",
-          header_lex_time.as_micros() + source_lex_time.as_micros()
-        );
-        println!(
-          "Parsing: {}us",
-          header_parse_time.as_micros() + source_parse_time.as_micros()
-        );
-        println!("Semantics: {}us", sema_time.as_micros());
-      }
-
       if config.check {
         println!("Semantic analysis passes.");
         return 0;
@@ -100,9 +88,8 @@ fn main() {
         time!(ir_codegen::munch_program(&source_ast, &symbol_table));
 
       if config.dump_ir {
-        for (func_name, func_ir) in &mut program_ir {
+        for (func_name, func_ir) in &program_ir {
           println!("{func_name}");
-          func_ir.deconstruct_ssa();
           for ir_instr in func_ir.linearize() {
             println!("\t{ir_instr}");
           }
@@ -110,6 +97,15 @@ fn main() {
       }
 
       if config.verbose {
+        println!(
+          "Lexing: {}us",
+          header_lex_time.as_micros() + source_lex_time.as_micros()
+        );
+        println!(
+          "Parsing: {}us",
+          header_parse_time.as_micros() + source_parse_time.as_micros()
+        );
+        println!("Semantics: {}us", sema_time.as_micros());
         println!("IR Codegen: {}us", ir_gen_time.as_micros());
       }
 
@@ -125,6 +121,7 @@ fn main() {
             config.optimizer_level
           ));
 
+          // 6. x86 assembly generation
           let (x86_program, x86_time) = time!(x86_codegen::generate_assembly(
             &program_ir,
             coloring,

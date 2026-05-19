@@ -21,7 +21,7 @@ pub const UNCOLORED: Color = 0;
 pub const SPILL: Color = 15;
 
 /// Width in bytes of a stack slot allocated to a temporary.
-const STACK_SLOT_WIDT: usize = 8;
+const STACK_SLOT_WIDTH: usize = 8;
 
 /// Maps temporaries in functions of program IR to registers or spills to stack.
 /// At optimizer level 0, spills all temps.
@@ -158,7 +158,7 @@ pub fn allocate_spill_slots(
       (
         temp_id,
         StackVar {
-          offset: (slot * STACK_SLOT_WIDT) as i64,
+          offset: (slot * STACK_SLOT_WIDTH) as i64,
           width: W64,
         },
       )
