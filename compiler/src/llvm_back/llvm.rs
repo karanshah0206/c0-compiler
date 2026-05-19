@@ -74,7 +74,7 @@ pub fn generate_llvm(
   }
 
   let mut needs_abort = false;
-  let mut needs_malloc = false;
+  let mut needs_calloc = false;
   let mut aux_counter = 0usize;
 
   for (func_name, func_ir) in program_ir {
@@ -99,7 +99,7 @@ pub fn generate_llvm(
         &source_defined,
         &return_type,
         &mut needs_abort,
-        &mut needs_malloc,
+        &mut needs_calloc,
         &mut aux_counter,
       ));
     }
@@ -112,11 +112,11 @@ pub fn generate_llvm(
     out.push_str("declare void @abort()\n");
   }
 
-  if needs_malloc
-    && (!function_signatures.contains_key("malloc")
-      || source_defined.contains(&"malloc".to_string()))
+  if needs_calloc
+    && (!function_signatures.contains_key("calloc")
+      || source_defined.contains(&"calloc".to_string()))
   {
-    out.push_str("declare ptr @malloc(i64)\n");
+    out.push_str("declare ptr @calloc(i64, i64)\n");
   }
 
   out
@@ -186,7 +186,7 @@ fn generate_instr(
   source_defined: &HashSet<&Ident>,
   return_type: &Typ,
   needs_abort: &mut bool,
-  needs_malloc: &mut bool,
+  needs_calloc: &mut bool,
   aux_counter: &mut usize,
 ) -> String {
   match instr {
@@ -460,23 +460,20 @@ fn generate_instr(
           )
         }
         Instr::Alloc { dest, size } => {
-          *needs_malloc = true;
+          *needs_calloc = true;
+          let (size, prefix) = cast_to_i64(size, aux_counter);
           format!(
-            "\t%t{} = call ptr @malloc(i64 {})\n",
+            "{prefix}\t%t{} = call ptr @calloc(i64 1, i64 {size})\n",
             dest.0,
-            cast_to_i64(size, aux_counter).0
           )
         }
         Instr::AllocArray { dest, size, count } => {
-          *needs_malloc = true;
+          *needs_calloc = true;
           let (size, mut prefix): (String, String) = cast_to_i64(size, aux_counter);
           let (count, count_prefix): (String, String) = cast_to_i64(count, aux_counter);
           prefix.push_str(&count_prefix);
-          let bytes_aux = format!("%aux{}", *aux_counter);
-          *aux_counter += 1;
-          prefix.push_str(&format!("\t{bytes_aux} = mul i64 {size}, {count}\n"));
           format!(
-            "{prefix}\t%t{} = call ptr @malloc(i64 {bytes_aux})\n",
+            "{prefix}\t%t{} = call ptr @calloc(i64 {count}, i64 {size})\n",
             dest.0
           )
         }
