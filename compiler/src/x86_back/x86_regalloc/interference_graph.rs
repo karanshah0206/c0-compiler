@@ -14,7 +14,7 @@ use crate::x86_back::{
 };
 
 /// A node in the interference graph.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Node {
   /// Pre-colored temporary goes directly to register.
   Reg(X86Reg),

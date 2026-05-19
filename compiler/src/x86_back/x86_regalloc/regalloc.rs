@@ -20,9 +20,6 @@ pub type Color = usize;
 pub const UNCOLORED: Color = 0;
 pub const SPILL: Color = 15;
 
-/// Max number of allocator iterations to run.
-const MAX_ALLOC_ITERATIONS: usize = 3;
-
 /// Width in bytes of a stack slot allocated to a temporary.
 const STACK_SLOT_WIDT: usize = 8;
 
@@ -56,7 +53,7 @@ pub fn register_allocation(
       .get_params()
       .len();
 
-    let func_coloring = coloring::allocate_function(func_ir, params_count, MAX_ALLOC_ITERATIONS);
+    let func_coloring = allocator::allocate_function(func_ir, params_count);
     coloring.insert(func_name.clone(), func_coloring);
   }
 

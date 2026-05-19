@@ -176,7 +176,7 @@ fn collect_def_patch(
 
 /// Patches the used temporaries of an instruction.
 fn apply_use_patches(instr: &mut Instr, use_map: &HashMap<usize, Temp>) {
-  let mut patch = |op: &mut Operand| {
+  let patch = |op: &mut Operand| {
     if let Operand::Temp((id, _)) = op {
       if let Some(fresh) = use_map.get(id) {
         *op = Operand::Temp(fresh.clone());
