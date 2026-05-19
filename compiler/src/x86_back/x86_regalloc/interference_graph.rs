@@ -1,7 +1,4 @@
-use std::{
-  cmp::min,
-  collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::front::ast::{BinOp, Typ};
 use crate::intermediate::{
@@ -84,8 +81,8 @@ impl InterferenceGraph {
 
     self.adj_set.insert((u, v));
     self.adj_set.insert((v, u));
-    self.adj.entry(u).or_default();
-    self.adj.entry(v).or_default();
+    self.adj.entry(u).or_default().insert(v);
+    self.adj.entry(v).or_default().insert(u);
     *self.degree.entry(u).or_insert(0) += 1;
     *self.degree.entry(v).or_insert(0) += 1;
   }
@@ -389,7 +386,7 @@ fn approximate_block_weights(ctx: &IRContext) -> HashMap<Label, f64> {
 
   let mut weights: HashMap<Label, f64> = HashMap::new();
   for (label, depth) in depth {
-    let capped = min(depth, 10) as i32;
+    let capped = depth.min(10) as i32;
     weights.insert(label, 10f64.powi(capped));
   }
 
