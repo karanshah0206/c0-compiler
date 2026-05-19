@@ -13,7 +13,7 @@ use logos::Logos;
 use crate::front::{lexer::Token, parser::parse, semantics};
 use crate::intermediate::ir_codegen;
 use crate::llvm_back::llvm::generate_llvm;
-use crate::x86_back::{x86_codegen, x86_regalloc};
+use crate::x86_back::{x86_codegen, x86_optimize, x86_regalloc};
 
 fn main() {
   let config = args::parse_args();
@@ -122,16 +122,23 @@ fn main() {
           ));
 
           // 6. x86 assembly generation
-          let (x86_program, x86_time) = time!(x86_codegen::generate_assembly(
+          let (mut x86_program, x86_time) = time!(x86_codegen::generate_assembly(
             &program_ir,
             coloring,
             &symbol_table,
             config.allow_unsafe
           ));
 
+          // 7. x86 optimizations
+          let (_, x86_optimization_time) = time!(x86_optimize::optimize(
+            &mut x86_program,
+            config.optimizer_level
+          ));
+
           if config.verbose {
             println!("Register Allocation: {}us", regalloc_time.as_micros());
             println!("x86 Codegen: {}us", x86_time.as_micros());
+            println!("x86 Optimization: {}us", x86_optimization_time.as_micros());
           }
 
           emit::emit_x86(config.source.unwrap(), x86_program).is_err() as i32
