@@ -11,7 +11,7 @@ use std::{fs, process, thread, time};
 use logos::Logos;
 
 use crate::front::{lexer::Token, parser::parse, semantics};
-use crate::intermediate::ir_codegen;
+use crate::intermediate::{ir_codegen, ir_optimize};
 use crate::llvm_back::llvm::generate_llvm;
 use crate::x86_back::{x86_codegen, x86_optimize, x86_regalloc};
 
@@ -96,6 +96,12 @@ fn main() {
         }
       }
 
+      // 5. IR optimization
+      let (_, ir_optimize_time) = time!(ir_optimize::optimize(
+        &mut program_ir,
+        config.optimizer_level
+      ));
+
       if config.verbose {
         println!(
           "Lexing: {}us",
@@ -107,6 +113,7 @@ fn main() {
         );
         println!("Semantics: {}us", sema_time.as_micros());
         println!("IR Codegen: {}us", ir_gen_time.as_micros());
+        println!("IR Optimization: {}us", ir_optimize_time.as_micros());
       }
 
       match config.target {
@@ -114,14 +121,14 @@ fn main() {
           emit::emit_ir(config.source.unwrap(), program_ir, symbol_table).is_err() as i32
         }
         args::EmitTarget::X86_64 => {
-          // 5. Register allocation
+          // 6. Register allocation
           let (coloring, regalloc_time) = time!(x86_regalloc::register_allocation(
             &mut program_ir,
             &symbol_table,
             config.optimizer_level
           ));
 
-          // 6. x86 assembly generation
+          // 7. x86 assembly generation
           let (mut x86_program, x86_time) = time!(x86_codegen::generate_assembly(
             &program_ir,
             coloring,
@@ -129,7 +136,7 @@ fn main() {
             config.allow_unsafe
           ));
 
-          // 7. x86 optimizations
+          // 8. x86 optimizations
           let (_, x86_optimization_time) = time!(x86_optimize::optimize(
             &mut x86_program,
             config.optimizer_level
