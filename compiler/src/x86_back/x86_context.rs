@@ -1,10 +1,13 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::front::ast::{BinOp, Typ, UnOp};
-use crate::intermediate::ir_asm::{Operand, Temp};
+use crate::intermediate::{
+  ir_asm::{Operand, Temp},
+  ir_context::IRContext,
+};
 use crate::x86_back::{
-  regalloc::*,
   x86_asm::{Width::*, *},
+  x86_regalloc::*,
 };
 
 /// Width in bytes for a slot on stack allotted to a temporary.
@@ -88,7 +91,14 @@ pub struct X86Context {
 
 impl X86Context {
   /// Generate a new x86-64 code generation context for a function.
-  pub fn new(regalloc: Vec<Color>, params_count: usize, label_prefix: String) -> Self {
+  pub fn new(
+    regalloc: Vec<Color>,
+    params_count: usize,
+    label_prefix: String,
+    ir_context: &IRContext,
+  ) -> Self {
+    let (spill_stack_allocation, spill_slot_count) =
+      allocate_spill_slots(ir_context, &regalloc, params_count);
     let mut ctx = X86Context {
       instructions: Vec::new(),
       used_callee_saved: BTreeSet::new(),
@@ -100,24 +110,17 @@ impl X86Context {
     };
 
     let arg_regs = X86Reg::call_argument();
-    let mut stack_depth = 0;
+    let stack_depth = spill_slot_count * STACK_SLOT_WIDTH;
 
-    // determine stack space for spilt temporaries excluding arguments on stack
+    for (temp_id, slot) in spill_stack_allocation {
+      ctx.stack_allocation.insert(temp_id, slot);
+    }
+
+    // determine callee-saved registers used in this context
     for (temp_id, &allocation) in ctx.regalloc.iter().enumerate() {
       match allocation {
         UNCOLORED => unreachable!("Found uncolored argument temporary with id {temp_id}."),
-        SPILL => {
-          if temp_id < arg_regs.len() || temp_id >= params_count {
-            ctx.stack_allocation.insert(
-              temp_id,
-              StackVar {
-                offset: stack_depth as i64,
-                width: W64,
-              },
-            );
-            stack_depth += STACK_SLOT_WIDTH;
-          }
-        }
+        SPILL => {}
         color => {
           let register = color_to_register(color);
           if X86Reg::callee_saved().contains(&register) {
@@ -259,8 +262,10 @@ impl X86Context {
       "Invalid move to an immediate destination in x86 codegen."
     );
 
+    let is_memory = |op: X86Operand| matches!(op, X86Operand::Stack(_) | X86Operand::Memory(_));
+
     if src != dest {
-      if matches!((src, dest), (X86Operand::Stack(_), X86Operand::Stack(_))) {
+      if is_memory(src) && is_memory(dest) {
         self.instructions.push(X86Instr::Mov(
           src,
           X86Operand::Register(X86WReg::scratch(src.width())),
@@ -288,6 +293,11 @@ impl X86Context {
   /// Emit a compare instruction.
   pub fn emit_cmp(&mut self, src: X86Operand, dest: X86Operand) {
     self.instructions.push(X86Instr::Cmp(src, dest));
+  }
+
+  /// Emit a test instruction.
+  pub fn emit_test(&mut self, src: X86Operand, dest: X86Operand) {
+    self.instructions.push(X86Instr::Test(src, dest));
   }
 
   /// Emit a (void or non-void) return instruction.
@@ -330,6 +340,13 @@ impl X86Context {
 
   /// Emit a jump to trap if predicate less than value.
   pub fn emit_trap_if_lesser(&mut self, pred: X86Operand, value: i64, trap: Trap) {
+    if let X86Operand::Immediate(imm) = pred {
+      if Self::signed_immediate_value(imm) < value {
+        self.emit_trap_jump(trap);
+      }
+      return;
+    }
+
     self.emit_cmp(
       X86Operand::Immediate(Immediate {
         value,
@@ -342,8 +359,33 @@ impl X86Context {
       .push(X86Instr::Jl(trap.get_global_label()));
   }
 
+  /// Emit a jump to trap if `pred` is greater-than-or-equal to `upper`.
+  pub fn emit_trap_if_geq_bound(&mut self, pred: X86Operand, upper: X86Operand, trap: Trap) {
+    let pred = if matches!(pred, X86Operand::Stack(_) | X86Operand::Memory(_))
+      && matches!(upper, X86Operand::Stack(_) | X86Operand::Memory(_))
+    {
+      let scratch = X86Operand::Register(X86WReg::scratch(pred.width()));
+      self.emit_move(pred, scratch);
+      scratch
+    } else {
+      pred
+    };
+
+    self.emit_cmp(pred, upper);
+    self
+      .instructions
+      .push(X86Instr::Jle(trap.get_global_label()));
+  }
+
   /// Emit a jump to trap if predicate is greater than value.
   pub fn emit_trap_if_greater(&mut self, pred: X86Operand, value: i64, trap: Trap) {
+    if let X86Operand::Immediate(imm) = pred {
+      if Self::signed_immediate_value(imm) > value {
+        self.emit_trap_jump(trap);
+      }
+      return;
+    }
+
     self.emit_cmp(
       X86Operand::Immediate(Immediate {
         value,
@@ -356,6 +398,21 @@ impl X86Context {
       .push(X86Instr::Jg(trap.get_global_label()));
   }
 
+  /// Emit a jump to trap if predicate is zero.
+  pub fn emit_trap_if_zero(&mut self, pred: X86Operand, trap: Trap) {
+    if let X86Operand::Immediate(imm) = pred {
+      if imm.value == 0 {
+        self.emit_trap_jump(trap);
+      }
+      return;
+    }
+
+    self.emit_test(pred, pred);
+    self
+      .instructions
+      .push(X86Instr::Je(trap.get_global_label()));
+  }
+
   /// Emit an if-else conditional jump instruction block.
   pub fn emit_conditional(
     &mut self,
@@ -365,57 +422,6 @@ impl X86Context {
   ) {
     self.emit_jump_if(pred, holds_label_id);
     self.emit_jump(fails_label_id);
-  }
-
-  /// Push an operand onto the stack. May clobber the scratch register if `src` is on memory.
-  pub fn emit_push(&mut self, src: X86Operand) {
-    let src = if src.width() == W64 {
-      src
-    } else {
-      match src {
-        X86Operand::Register(wreg) => X86Operand::Register(X86WReg {
-          register: wreg.register,
-          width: W64,
-        }),
-        X86Operand::Stack(_) => {
-          self.emit_move(src, X86Operand::Register(X86WReg::scratch(src.width())));
-          X86Operand::Register(X86WReg::scratch(W64))
-        }
-        X86Operand::Immediate(imm) => X86Operand::Immediate(Immediate {
-          value: imm.value,
-          width: W64,
-        }),
-      }
-    };
-    self.instructions.push(X86Instr::Push(src));
-  }
-
-  /// Pop an operand from the stack. May clobber the scratch register if `dest` is on memory.
-  pub fn emit_pop(&mut self, dest: X86Operand) {
-    match dest {
-      X86Operand::Register(wreg) => {
-        self
-          .instructions
-          .push(X86Instr::Pop(X86Operand::Register(X86WReg {
-            register: wreg.register,
-            width: W64,
-          })));
-      }
-      X86Operand::Stack(stack_var) => {
-        if stack_var.width == W64 {
-          self.instructions.push(X86Instr::Pop(dest));
-        } else {
-          self
-            .instructions
-            .push(X86Instr::Pop(X86Operand::Register(X86WReg::scratch(W64))));
-          self.emit_move(
-            X86Operand::Register(X86WReg::scratch(stack_var.width)),
-            dest,
-          );
-        }
-      }
-      X86Operand::Immediate(_) => unreachable!("Illegal pop instruction to an immediate."),
-    };
   }
 
   /// Emit a unary operation on the destination operand.
@@ -439,19 +445,43 @@ impl X86Context {
   /// Emit a binary operation from source to destination operand.
   /// Either of the operands may be implicit depending on the oepration.
   pub fn emit_binary_op(&mut self, op: BinOp, src: Option<X86Operand>, dest: Option<X86Operand>) {
+    let is_32_bit = |value: i64| i32::try_from(value).is_ok();
+
     let op_instr = match op {
       BinOp::Add => {
         if matches!(src, Some(X86Operand::Immediate(Immediate { value: 0, .. }))) {
           return;
         } else {
-          X86Instr::Add(src.unwrap(), dest.unwrap())
+          let src = src.unwrap();
+          let dest = dest.unwrap();
+
+          if let X86Operand::Immediate(Immediate { value, width }) = src
+            && !is_32_bit(value)
+          {
+            let scratch = X86Operand::Register(X86WReg::scratch2(width));
+            self.emit_move(src, scratch);
+            X86Instr::Add(scratch, dest)
+          } else {
+            X86Instr::Add(src, dest)
+          }
         }
       }
       BinOp::Sub => {
         if matches!(src, Some(X86Operand::Immediate(Immediate { value: 0, .. }))) {
           return;
         } else {
-          X86Instr::Sub(src.unwrap(), dest.unwrap())
+          let src = src.unwrap();
+          let dest = dest.unwrap();
+
+          if let X86Operand::Immediate(Immediate { value, width }) = src
+            && !is_32_bit(value)
+          {
+            let scratch = X86Operand::Register(X86WReg::scratch2(width));
+            self.emit_move(src, scratch);
+            X86Instr::Sub(scratch, dest)
+          } else {
+            X86Instr::Sub(src, dest)
+          }
         }
       }
       BinOp::Mul => match src.unwrap() {
@@ -519,8 +549,8 @@ impl X86Context {
         offset: stack_var.offset,
         width: W8,
       }),
-      X86Operand::Immediate(_) => {
-        unreachable!("Dest cannot be an immediate for binary comparator operations.")
+      X86Operand::Memory(_) | X86Operand::Immediate(_) => {
+        unreachable!("Invalid function return operand in x86 codegen.")
       }
     };
 
@@ -598,27 +628,34 @@ impl X86Context {
     // place arguments
     for (index, &arg) in args.iter().enumerate() {
       if index < arg_regs.len() {
-        self.emit_move(
-          match arg {
-            X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
-              offset: call_offset as i64 + stack_var.offset,
-              width: arg.width(),
-            }),
-            X86Operand::Register(wreg) => {
-              // check need for potential parallel move resolution
-              if let Some(reg_index) = caller_saved.iter().position(|&reg| reg == wreg.register)
-                && reg_index != index
-              {
-                X86Operand::Stack(StackVar {
-                  offset: (args_offset + reg_index * STACK_SLOT_WIDTH) as i64,
-                  width: arg.width(),
-                })
-              } else {
-                arg
-              }
+        let src = match arg {
+          X86Operand::Stack(stack_var) => X86Operand::Stack(StackVar {
+            offset: call_offset as i64 + stack_var.offset,
+            width: arg.width(),
+          }),
+          X86Operand::Register(wreg) => {
+            // check need for potential parallel move resolution
+            if let Some(reg_index) = caller_saved.iter().position(|&reg| reg == wreg.register)
+              && reg_index != index
+            {
+              X86Operand::Stack(StackVar {
+                offset: (args_offset + reg_index * STACK_SLOT_WIDTH) as i64,
+                width: arg.width(),
+              })
+            } else {
+              arg
             }
-            X86Operand::Immediate(_) => arg,
-          },
+          }
+          X86Operand::Immediate(_) => arg,
+          X86Operand::Memory(mem_var) => {
+            let scratch = X86Operand::Register(X86WReg::scratch(mem_var.width));
+            self.emit_move(arg, scratch);
+            scratch
+          }
+        };
+
+        self.emit_move(
+          src,
           X86Operand::Register(X86WReg {
             register: arg_regs[index],
             width: arg.width(),
@@ -655,8 +692,8 @@ impl X86Context {
         X86Operand::Register(_) => {
           self.emit_move(X86Operand::Register(X86WReg::ret(dest.width())), dest)
         }
-        X86Operand::Immediate(_) => {
-          unreachable!("Destination of a function return value cannot be an immediate.")
+        X86Operand::Immediate(_) | X86Operand::Memory(_) => {
+          unreachable!("Invalid function return operand in x86 codegen.")
         }
       }
     }
@@ -731,6 +768,16 @@ impl X86Context {
   fn format_label(&self, label_id: usize) -> String {
     format!("{}{label_id}", self.label_prefix)
   }
+
+  /// Helper to get casted immediates.
+  fn signed_immediate_value(imm: Immediate) -> i64 {
+    match imm.width {
+      W8 => (imm.value as i8) as i64,
+      W16 => (imm.value as i16) as i64,
+      W32 => (imm.value as i32) as i64,
+      W64 => imm.value,
+    }
+  }
 }
 
 /// Get the bit-width for fundamental C0 types.
@@ -738,8 +785,8 @@ fn width_for_type(typ: &Typ) -> Width {
   match typ {
     Typ::Bool => W8,
     Typ::Int => W32,
-    Typ::Pointer(..) | Typ::Array(..) => W64,
-    Typ::Void | Typ::Null | Typ::Typedef(_) | Typ::Struct(_) => {
+    Typ::Null | Typ::Pointer(..) | Typ::Array(..) => W64,
+    Typ::Void | Typ::Typedef(_) | Typ::Struct(_) => {
       unreachable!("Bad width evaluation in x86 codegen for type {typ}.")
     }
   }

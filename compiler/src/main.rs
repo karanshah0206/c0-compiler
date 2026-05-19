@@ -13,7 +13,7 @@ use logos::Logos;
 use crate::front::{lexer::Token, parser::parse, semantics};
 use crate::intermediate::ir_codegen;
 use crate::llvm_back::llvm::generate_llvm;
-use crate::x86_back::{regalloc, x86_codegen};
+use crate::x86_back::{x86_codegen, x86_regalloc};
 
 fn main() {
   let config = args::parse_args();
@@ -119,7 +119,7 @@ fn main() {
         }
         args::EmitTarget::X86_64 => {
           // 5. Register allocation
-          let (coloring, regalloc_time) = time!(regalloc::register_allocation(
+          let (coloring, regalloc_time) = time!(x86_regalloc::register_allocation(
             &mut program_ir,
             &symbol_table,
             config.optimizer_level
