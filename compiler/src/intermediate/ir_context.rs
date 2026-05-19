@@ -191,6 +191,16 @@ impl IRContext {
     self.current_block_label = label;
   }
 
+  /// Get blocks in context.
+  pub fn get_blocks(&self) -> &HashMap<Label, BasicBlock> {
+    &self.blocks
+  }
+
+  /// Get blocks in context as mutable.
+  pub fn get_blocks_mut(&mut self) -> &mut HashMap<Label, BasicBlock> {
+    &mut self.blocks
+  }
+
   /// Create and return new temporary of a given type.
   pub fn create_temp(&mut self, typ: Typ) -> Temp {
     let temp: Temp = (self.temp_counter, typ);
@@ -320,7 +330,9 @@ impl IRContext {
       }
       Instr::Alloc { size, .. } => resolve_op(size),
       Instr::AllocArray {
-        size: elem_size, count, ..
+        size: elem_size,
+        count,
+        ..
       } => {
         resolve_op(elem_size);
         resolve_op(count);

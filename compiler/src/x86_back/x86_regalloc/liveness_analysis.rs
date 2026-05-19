@@ -1,11 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::front::ast::BinOp;
 use crate::intermediate::{
   ir_asm::{Instr, Label, Operand},
   ir_context::{BasicBlock, IRContext},
 };
-use crate::x86_back::x86_asm::{Width::*, X86Reg, X86WReg};
 
 /// Liveness analysis result.
 pub struct Liveness {
@@ -185,29 +183,4 @@ fn analyze_block(block: &BasicBlock) -> (HashSet<usize>, HashSet<usize>) {
   }
 
   (uses, defines)
-}
-
-/// Get registers clobbered by an instruction.
-fn get_clobbered_regs(instr: &Instr) -> Vec<X86Reg> {
-  match instr {
-    Instr::Call { .. } | Instr::Alloc { .. } | Instr::AllocArray { .. } => X86Reg::caller_saved()
-      .into_iter()
-      .filter(|r| X86Reg::allocatable().contains(r))
-      .collect(),
-    Instr::BinOp { op: BinOp::Div, .. } | Instr::BinOp { op: BinOp::Mod, .. } => vec![
-      X86WReg::quotient(W64).register,
-      X86WReg::modulo(W64).register,
-    ],
-    Instr::BinOp {
-      op: BinOp::Sal,
-      rhs,
-      ..
-    }
-    | Instr::BinOp {
-      op: BinOp::Sar,
-      rhs,
-      ..
-    } if !matches!(rhs, Operand::Const(_)) => vec![X86WReg::shift().register],
-    _ => vec![],
-  }
 }

@@ -1,7 +1,7 @@
 use std::fmt::{Display, Error, Formatter};
 
 /// X86-64 general-purpose registers.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum X86Reg {
   Rax,
   Rbx,
