@@ -131,7 +131,7 @@ pub fn get_uses(instr: &Instr) -> Vec<usize> {
     }
     Instr::UnOp { src, .. } => push(src),
     Instr::JumpIf { pred, .. } => push(pred),
-    Instr::Call { args, .. } => {
+    Instr::Call { args, .. } | Instr::TailCall { args, .. } => {
       for arg in args {
         push(arg);
       }

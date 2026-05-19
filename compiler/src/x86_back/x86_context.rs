@@ -723,6 +723,56 @@ impl X86Context {
     );
   }
 
+  /// Emit instructions for a tail call.
+  /// Returns `false` is cannot emit tail call.
+  pub fn emit_tail_call(&mut self, args: Vec<X86Operand>, name: String) -> bool {
+    let arg_regs = X86Reg::call_argument();
+
+    if args.len() > arg_regs.len()
+      || args
+        .iter()
+        .any(|arg| matches!(arg, X86Operand::Register(wreg) if arg_regs.contains(&wreg.register)))
+    {
+      return false;
+    }
+
+    for (index, &arg) in args.iter().enumerate() {
+      self.emit_move(
+        arg,
+        X86Operand::Register(X86WReg {
+          register: arg_regs[index],
+          width: arg.width(),
+        }),
+      );
+    }
+
+    if self.frame_size > 0 {
+      self.instructions.push(X86Instr::Add(
+        X86Operand::Immediate(Immediate {
+          value: self.frame_size as i64,
+          width: W64,
+        }),
+        X86Operand::Register(X86WReg::stack_pointer()),
+      ));
+    }
+
+    for (index, &register) in self.used_callee_saved.iter().enumerate() {
+      self.instructions.push(X86Instr::Mov(
+        X86Operand::Stack(StackVar {
+          offset: -(((index + 1) * STACK_SLOT_WIDTH) as i64),
+          width: W64,
+        }),
+        X86Operand::Register(X86WReg {
+          register,
+          width: W64,
+        }),
+      ))
+    }
+
+    self.instructions.push(X86Instr::Jmp(name));
+    true
+  }
+
   /// Generate final assembly for this context.
   pub fn assemble(&mut self) -> Vec<X86Instr> {
     let mut assembly: Vec<X86Instr> = Vec::new();

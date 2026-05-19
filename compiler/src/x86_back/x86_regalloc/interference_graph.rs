@@ -245,7 +245,10 @@ fn process_instruction(
 /// Get registers clobbered by an instruction.
 fn get_clobbered_regs(instr: &Instr) -> Vec<X86Reg> {
   match instr {
-    Instr::Call { .. } | Instr::Alloc { .. } | Instr::AllocArray { .. } => X86Reg::caller_saved()
+    Instr::Call { .. }
+    | Instr::TailCall { .. }
+    | Instr::Alloc { .. }
+    | Instr::AllocArray { .. } => X86Reg::caller_saved()
       .into_iter()
       .filter(|r| X86Reg::allocatable().contains(r))
       .collect(),
@@ -315,6 +318,11 @@ fn get_temp_types(instr: &Instr, temp_types: &mut TempTypes) {
       }
       for a in args {
         walk_op(a, temp_types);
+      }
+    }
+    Instr::TailCall { args, .. } => {
+      for arg in args {
+        walk_op(arg, temp_types);
       }
     }
     Instr::Return(Some(op)) => walk_op(op, temp_types),

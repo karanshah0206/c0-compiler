@@ -67,9 +67,13 @@ fn munch_statement(stmt: &Stmt, ctx: &mut IRContext, st: &SymbolTable) -> bool {
         return false;
       }
 
-      if let Expr::Variable(var_id, _) = lhs {
+      if let Expr::Variable(var_id, var_typ) = lhs {
         let assigned_temp = match asn_op {
-          AsnOp::Equal => get_operand_temp(munch_expression(expr, ctx, st), expr.get_type(), ctx),
+          AsnOp::Equal => get_operand_temp(
+            munch_expression(expr, ctx, st),
+            var_typ.clone().unwrap_or_else(|| lhs.get_type()),
+            ctx,
+          ),
           op => {
             let op = op.to_binop().unwrap();
             let lhs_temp = ctx.read_variable(var_id, ctx.current_block_label);
@@ -530,7 +534,17 @@ fn munch_lvalue_address(expr: &Expr, ctx: &mut IRContext, st: &SymbolTable) -> O
     Expr::Deref(pointer_expr, depth, _) => {
       let mut addr = munch_expression(pointer_expr, ctx, st);
       for _ in 1..*depth {
-        let loaded_typ = deref_once_type(&operand_type(&addr));
+        let loaded_typ = match operand_type(&addr) {
+          Typ::Pointer(inner, depth) => {
+            if depth > 1 {
+              Typ::Pointer(inner.clone(), depth - 1)
+            } else {
+              *inner.clone()
+            }
+          }
+          typ => unreachable!("Attempted dereferencing non-pointer type {typ} in IR generation."),
+        };
+
         let dest = ctx.create_temp(loaded_typ);
         ctx.add_instr_to_block(Instr::Load {
           dest: dest.clone(),
@@ -543,34 +557,14 @@ fn munch_lvalue_address(expr: &Expr, ctx: &mut IRContext, st: &SymbolTable) -> O
     Expr::ArrayIndex(array_expr, index_expr, typ) => {
       let base = munch_expression(array_expr, ctx, st);
       let index = munch_expression(index_expr, ctx, st);
-      let elem_size = Operand::Const((
-        type_size_bytes(&typ.clone().unwrap_or_else(|| expr.get_type()), st),
-        Typ::Int,
-      ));
+      let elem_typ = typ.clone().unwrap_or_else(|| expr.get_type());
 
-      let scaled = match index {
-        Operand::Const((value, _)) => Operand::Const((
-          value * type_size_bytes(&typ.clone().unwrap_or_else(|| expr.get_type()), st),
-          Typ::Int,
-        )),
-        _ => {
-          let tmp = ctx.create_temp(Typ::Int);
-          ctx.add_instr_to_block(Instr::BinOp {
-            op: BinOp::Mul,
-            dest: tmp.clone(),
-            lhs: index,
-            rhs: elem_size,
-          });
-          Operand::Temp(tmp)
-        }
-      };
-
-      let dest = ctx.create_temp(operand_type(&base));
+      let dest = ctx.create_temp(Typ::Pointer(Box::new(elem_typ), 1));
       ctx.add_instr_to_block(Instr::BinOp {
         op: BinOp::Add,
         dest: dest.clone(),
         lhs: base,
-        rhs: scaled,
+        rhs: index,
       });
       Operand::Temp(dest)
     }
@@ -606,6 +600,7 @@ fn munch_lvalue_address(expr: &Expr, ctx: &mut IRContext, st: &SymbolTable) -> O
   }
 }
 
+/// Get the data type of an IR operand.
 fn operand_type(op: &Operand) -> Typ {
   match op {
     Operand::Const((_, typ)) => typ.clone(),
@@ -613,38 +608,46 @@ fn operand_type(op: &Operand) -> Typ {
   }
 }
 
-fn deref_once_type(typ: &Typ) -> Typ {
-  match typ {
-    Typ::Pointer(inner, depth) => {
-      if *depth > 1 {
-        Typ::Pointer(inner.clone(), depth - 1)
-      } else {
-        *inner.clone()
-      }
-    }
-    _ => unreachable!("Attempted dereferencing non-pointer type {typ} in IR generation."),
-  }
+/// Compute size of data type in bytes - cacheing results for structs to avoid recomputation.
+fn type_size_bytes(typ: &Typ, st: &SymbolTable) -> i64 {
+  let mut struct_size_cache = HashMap::new();
+  type_size_bytes_cached(typ, st, &mut struct_size_cache)
 }
 
-fn type_size_bytes(typ: &Typ, symbol_table: &SymbolTable) -> i64 {
+fn type_size_bytes_cached(
+  typ: &Typ,
+  st: &SymbolTable,
+  struct_size_cache: &mut HashMap<Ident, i64>,
+) -> i64 {
   match typ {
     Typ::Int => 4,
     Typ::Bool => 1,
     Typ::Pointer(..) | Typ::Array(..) => 8,
-    Typ::Struct(struct_id) => symbol_table
-      .get_struct_fields(struct_id)
-      .unwrap_or_else(|| {
-        unreachable!("Attempted size evaluation of unknown struct {struct_id} in IR generation.")
-      })
-      .iter()
-      .map(|(field_typ, _)| type_size_bytes(field_typ, symbol_table))
-      .sum(),
+    Typ::Struct(struct_id) => {
+      if let Some(cached_size) = struct_size_cache.get(struct_id) {
+        return *cached_size;
+      }
+
+      let struct_size = st
+        .get_struct_fields(struct_id)
+        .unwrap_or_else(|| {
+          unreachable!("Attempted size evaluation of unknown struct {struct_id} in IR generation.")
+        })
+        .iter()
+        .map(|(field_typ, _)| type_size_bytes_cached(field_typ, st, struct_size_cache))
+        .sum();
+
+      struct_size_cache.insert(struct_id.clone(), struct_size);
+      struct_size
+    }
     Typ::Void | Typ::Null | Typ::Typedef(_) => {
       unreachable!("Attempted size evaluation of invalid type {typ} in IR generation.")
     }
   }
 }
 
+/// Resolve ambiguity between pointers and multiplication operation.
+/// If the expression is a pointer, the function returns Some(pointer_var).
 fn resolve_pointer_mul_ambiguity(expr: &Expr, st: &SymbolTable) -> Option<Variable> {
   match expr {
     Expr::Binop(lhs, BinOp::Mul, rhs, _) => {
@@ -667,6 +670,7 @@ fn resolve_pointer_mul_ambiguity(expr: &Expr, st: &SymbolTable) -> Option<Variab
   }
 }
 
+/// Determine the identity and dimensions of a pointer type.
 fn get_pointer_var_depth(expr: &Expr) -> Option<(Ident, usize)> {
   match expr {
     Expr::Variable(var, _) => Some((var.clone(), 0)),

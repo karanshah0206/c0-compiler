@@ -306,7 +306,7 @@ impl IRContext {
         resolve_op(rhs);
       }
       Instr::UnOp { src, .. } => resolve_op(src),
-      Instr::Call { args, .. } => {
+      Instr::Call { args, .. } | Instr::TailCall { args, .. } => {
         for arg in args.iter_mut() {
           resolve_op(arg);
         }

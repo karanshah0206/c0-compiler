@@ -116,7 +116,7 @@ fn collect_use_patches(
     }
     Instr::UnOp { src, .. } => visit(src),
     Instr::JumpIf { pred, .. } => visit(pred),
-    Instr::Call { args, .. } => {
+    Instr::Call { args, .. } | Instr::TailCall { args, .. } => {
       for arg in args {
         visit(arg);
       }
@@ -191,7 +191,7 @@ fn apply_use_patches(instr: &mut Instr, use_map: &HashMap<usize, Temp>) {
     }
     Instr::UnOp { src, .. } => patch(src),
     Instr::JumpIf { pred, .. } => patch(pred),
-    Instr::Call { args, .. } => {
+    Instr::Call { args, .. } | Instr::TailCall { args, .. } => {
       for arg in args.iter_mut() {
         patch(arg);
       }

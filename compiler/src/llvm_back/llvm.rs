@@ -364,6 +364,39 @@ fn generate_instr(
         )
       }
     }
+    Instr::TailCall { name, args } => {
+      let function_signature = function_signatures.get(name).unwrap();
+      let mut arg_strings = Vec::with_capacity(function_signature.param_typs.len());
+      for (index, arg_typ) in function_signature.param_typs.iter().enumerate() {
+        let arg = emit_operand_of_typ(&args[index], arg_typ);
+        arg_strings.push(format!("{} {arg}", llvm_type(arg_typ)));
+      }
+
+      let callee = if source_defined.contains(name) {
+        &format!("_c0_{name}")
+      } else {
+        name
+      };
+
+      if function_signature.return_typ == Typ::Void {
+        format!(
+          "\ttail call {} @{}({})\n\tret void\n",
+          llvm_type(&function_signature.return_typ),
+          callee,
+          arg_strings.join(", ")
+        )
+      } else {
+        let tail_result = format!("%aux{}", *aux_counter);
+        *aux_counter += 1;
+        format!(
+          "\t{tail_result} = tail call {} @{}({})\n\tret {} {tail_result}\n",
+          llvm_type(&function_signature.return_typ),
+          callee,
+          arg_strings.join(", "),
+          llvm_type(return_type),
+        )
+      }
+    }
     Instr::Return(value) => match value {
       Some(value) => format!(
         "\tret {} {}\n",

@@ -53,6 +53,8 @@ pub enum Instr {
     name: Ident,
     args: Vec<Operand>,
   },
+  /// Tail-position function call
+  TailCall { name: Ident, args: Vec<Operand> },
   /// Return from a function
   Return(Option<Operand>),
   /// Throw a runtime exception
@@ -133,6 +135,7 @@ impl Display for Instr {
         Some(dest) => write!(fmt, "T{} <- CALL {name}({})", dest.0, display_args(args)),
         None => write!(fmt, "CALL {name}({})", display_args(args)),
       },
+      Instr::TailCall { name, args } => write!(fmt, "TAILCALL {name}({})", display_args(args)),
       Instr::Return(o) => match o {
         Some(o) => write!(fmt, "RETURN {o}"),
         None => write!(fmt, "RETURN"),

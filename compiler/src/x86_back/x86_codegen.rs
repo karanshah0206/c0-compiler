@@ -357,6 +357,35 @@ fn generate_function(
 
         ctx.emit_call(dest, args, name);
       }
+      // Tail-position function call
+      Instr::TailCall { name, args } => {
+        let args = args
+          .iter()
+          .map(|arg| ctx.get_operand_location(arg.clone()))
+          .collect::<Vec<_>>();
+        let return_typ = symbol_table
+          .get_function_signature(&name)
+          .unwrap_or_else(|| unreachable!("Unknown function {name} found in x86 codegen."))
+          .0;
+        let call_dest = if return_typ == Typ::Void {
+          None
+        } else {
+          Some(X86Operand::Register(X86WReg::ret(return_type_width(
+            return_typ,
+          ))))
+        };
+        let name = if symbol_table.is_header_function(&name) {
+          name
+        } else {
+          format!("_c0_{name}")
+        };
+
+        if !ctx.emit_tail_call(args.clone(), name.clone()) {
+          // if tail call emit fails, emitting regular call
+          ctx.emit_call(call_dest, args, name);
+          ctx.emit_return(None);
+        }
+      }
       // Return from function
       Instr::Return(src) => {
         let src = src.map(|src| ctx.get_operand_location(src));
