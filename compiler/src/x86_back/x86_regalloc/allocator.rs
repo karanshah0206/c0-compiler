@@ -15,34 +15,56 @@ const MAX_ITERATIONS: usize = 3;
 /// Status of each move edge during coalescing.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MoveStatus {
+  /// Move edge is currently in consideration for coalescing.
   Worklist,
+  /// One of the move edge's nodes might re-enter the worklist.
   Active,
+  /// Move edge was coalesced.
   Coalesced,
+  /// Move edge cannot be coalesced because endpoints interfere.
   Constrained,
+  /// Move edge appears impossible to coalesce.
   Fronzen,
 }
 
+/// Abstraction for running a full cycle of interference graph-based
+/// register allocation with iterated register coalescing.
 struct Allocator {
+  /// Number of assignable register.
   k: usize,
+  /// Interference graph.
   graph: InterferenceGraph,
 
+  /// Set of nodes that are precolored.
   precolored: HashSet<Node>,
+  /// The initial set of nodes coming in from the interference graph.
   initial: HashSet<Node>,
+  /// Set of nodes that to be simplified.
   simplify_worklist: HashSet<Node>,
+  /// Set of nodes that appear impossible to merge.
   freeze_worklist: HashSet<Node>,
+  /// Set of nodes marked as potential spills.
   spill_worklist: HashSet<Node>,
-
-  spilt_nodes: HashSet<Node>,
-  coalesced_nodes: HashSet<Node>,
-  colored_nodes: HashSet<Node>,
+  /// Stack to record allocation order during simplification.
   select_stack: Vec<Node>,
 
+  /// Set of nodes that have been spilt.
+  spilt_nodes: HashSet<Node>,
+  /// Set of nodes that have been coalesced.
+  coalesced_nodes: HashSet<Node>,
+  /// Set of nodes that have been assigned a color.
+  colored_nodes: HashSet<Node>,
+
+  /// Processing status of each move indexed on the move edge's ID.
   move_status: Vec<MoveStatus>,
+  /// IDs of move edges in consideration for coalescing.
   worklist_moves: HashSet<usize>,
+  /// Set of move edge IDs that were deferred but may be coalescible.
   active_moves: HashSet<usize>,
 
+  /// Alias mapping for coalesced nodes.
   alias: HashMap<Node, Node>,
-
+  /// Color mapping for processed nodes.
   color: HashMap<Node, Color>,
 }
 
@@ -57,10 +79,10 @@ impl Allocator {
       simplify_worklist: HashSet::new(),
       freeze_worklist: HashSet::new(),
       spill_worklist: HashSet::new(),
+      select_stack: Vec::new(),
       spilt_nodes: HashSet::new(),
       coalesced_nodes: HashSet::new(),
       colored_nodes: HashSet::new(),
-      select_stack: Vec::new(),
       move_status: Vec::new(),
       worklist_moves: HashSet::new(),
       active_moves: HashSet::new(),
