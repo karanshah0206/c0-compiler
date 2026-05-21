@@ -99,7 +99,8 @@ fn main() {
       // 5. IR optimization
       let (_, ir_optimize_time) = time!(ir_optimize::optimize(
         &mut program_ir,
-        config.optimizer_level
+        config.optimizer_level,
+        config.allow_unsafe
       ));
 
       if config.verbose {
