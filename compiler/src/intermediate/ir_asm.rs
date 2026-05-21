@@ -6,7 +6,7 @@ use crate::front::ast::{BinOp, Ident, Typ, UnOp};
 pub type Temp = (usize, Typ);
 
 /// Operand to an operator.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Operand {
   /// Typed immediate
   Const((i64, Typ)),

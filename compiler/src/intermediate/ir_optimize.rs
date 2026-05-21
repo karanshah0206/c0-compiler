@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crate::intermediate::{
   ir_codegen::ProgramIR,
   ir_context::IRContext,
-  ir_optimization::{adce::*, tail_call_elim::*},
+  ir_optimization::{adce::*, copy_prop::*, tail_call_elim::*},
 };
 
 const SECONDS_LIMIT_AT_O1: u64 = 12;
@@ -31,6 +31,7 @@ pub fn optimize(program: &mut ProgramIR, optimizer_level: u8, is_unsafe: bool) {
 
 fn optimize_ir(ir_context: &mut IRContext, is_unsafe: bool) -> bool {
   let mut changed = false;
+  changed |= copy_propagation(ir_context);
   changed |= adce(ir_context, is_unsafe);
   changed |= tail_call_elimination(ir_context);
   changed
