@@ -18,7 +18,7 @@ pub struct NaturalLoop {
 }
 
 /// Discover all natural loops in the control-flow graph.
-pub fn find_natural_loops(ctx: IRContext, doms: &DominatorTree) -> Vec<NaturalLoop> {
+pub fn find_natural_loops(ctx: &IRContext, doms: &DominatorTree) -> Vec<NaturalLoop> {
   let predecessors = get_predecessors_for_all_blocks(&ctx);
   let mut by_header: HashMap<Label, Vec<Label>> = HashMap::new();
 
