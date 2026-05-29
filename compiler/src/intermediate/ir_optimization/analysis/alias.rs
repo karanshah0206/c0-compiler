@@ -7,17 +7,17 @@ use crate::intermediate::{
 };
 
 /// The canonical address class for a temp that is of a pointer type.
-#[derive(Clone, Copy, PartialEq)]
-struct AddressClass {
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AddressClass {
   /// Temp id of the originating `alloc`/`alloc_array` instruction.
-  alloc_id: usize,
+  pub alloc_id: usize,
   /// Byte offset.
   offset: i64,
 }
 
 /// Known state of a pointer temporary.
-#[derive(Clone, Copy, PartialEq)]
-enum PointerTarget {
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerTarget {
   /// Pointer to a known, function-local `alloc` at a known byte offset.
   Class(AddressClass),
   /// Pointer to a known offset from an unknown base.

@@ -127,7 +127,7 @@ impl Expr {
 }
 
 /// Unary operators.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum UnOp {
   /// Arithmetic negation
   Neg,
@@ -138,7 +138,7 @@ pub enum UnOp {
 }
 
 /// Binary operators.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum BinOp {
   /// Arithmetic add (+)
   Add,
