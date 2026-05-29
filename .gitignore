@@ -1,10 +1,13 @@
 .vscode/
 bin/
-*.s
-*.out
 */debug/
 */target/
 .DS_Store
 
 # generated parser
 c0.rs
+
+# outputs from compiler test runs
+*.s
+*.abs
+*.out
