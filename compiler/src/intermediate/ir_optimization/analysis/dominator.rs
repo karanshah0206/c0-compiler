@@ -88,7 +88,7 @@ impl DominatorTree {
     let mut current = b;
     loop {
       if current == a {
-        true;
+        return true;
       }
       let parent = match self.dominator.get(&current) {
         Some(p) => *p,
