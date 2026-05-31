@@ -21,6 +21,37 @@ pub fn cfg_simplification(ctx: &mut IRContext) -> bool {
   changed
 }
 
+/// Reduce a phi node to a trivial move if possible.
+pub fn simplify_trivial_phi(instr: &mut Instr) -> bool {
+  let Instr::Phi { dest, srcs } = instr else {
+    return false;
+  };
+  if srcs.len() != 1 {
+    return false;
+  }
+  let src = srcs[0].1.clone();
+  *instr = Instr::Move {
+    dest: dest.clone(),
+    src,
+  };
+  true
+}
+
+/// Remove conditional jumps from block terminators, if possible.
+pub fn simplify_terminator(terminator: &mut Instr) -> bool {
+  if let Instr::JumpIf { pred, holds, fails } = terminator {
+    if let Operand::Const((value, _)) = pred {
+      *terminator = Instr::JumpTo(if *value != 0 { *holds } else { *fails });
+      return true;
+    }
+    if holds == fails {
+      *terminator = Instr::JumpTo(*holds);
+      return true;
+    }
+  }
+  false
+}
+
 /// Remove unreachable blocks and simplify phi nodes and block terminators.
 fn cfg_simplification_pass(ctx: &mut IRContext) -> bool {
   let mut changed = false;
@@ -72,37 +103,6 @@ fn cfg_simplification_pass(ctx: &mut IRContext) -> bool {
   }
 
   changed
-}
-
-/// Reduce a phi node to a trivial move if possible.
-fn simplify_trivial_phi(instr: &mut Instr) -> bool {
-  let Instr::Phi { dest, srcs } = instr else {
-    return false;
-  };
-  if srcs.len() != 1 {
-    return false;
-  }
-  let src = srcs[0].1.clone();
-  *instr = Instr::Move {
-    dest: dest.clone(),
-    src,
-  };
-  true
-}
-
-/// Remove conditional jumps from block terminators, if possible.
-fn simplify_terminator(terminator: &mut Instr) -> bool {
-  if let Instr::JumpIf { pred, holds, fails } = terminator {
-    if let Operand::Const((value, _)) = pred {
-      *terminator = Instr::JumpTo(if *value != 0 { *holds } else { *fails });
-      return true;
-    }
-    if holds == fails {
-      *terminator = Instr::JumpTo(*holds);
-      return true;
-    }
-  }
-  false
 }
 
 /// Merge straight chains of blocks in the control-flow graph.

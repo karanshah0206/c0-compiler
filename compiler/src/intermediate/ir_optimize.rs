@@ -3,12 +3,15 @@ use std::time::{Duration, Instant};
 use crate::intermediate::{
   ir_codegen::ProgramIR,
   ir_context::IRContext,
-  ir_optimization::{adce::*, cfg_simp::*, copy_prop::*, cse::*, licm::*, tail_call_elim::*},
+  ir_optimization::{
+    adce::*, cfg_simp::*, copy_prop::*, cse::*, licm::*, sccp::*, tail_call_elim::*,
+  },
 };
 
 const SECONDS_LIMIT_AT_O1: u64 = 12;
 const SECONDS_LIMIT_AT_O2: u64 = u64::MAX; // unbounded at -O2
 
+/// Run optimizations on the program's IR depending on optimizer level setting.
 pub fn optimize(program: &mut ProgramIR, optimizer_level: u8, is_unsafe: bool) {
   if optimizer_level == 0 {
     return;
@@ -29,9 +32,11 @@ pub fn optimize(program: &mut ProgramIR, optimizer_level: u8, is_unsafe: bool) {
   }
 }
 
+/// Run a single pass of optimizations on a function's IR.
 fn optimize_ir(ir_context: &mut IRContext, is_unsafe: bool) -> bool {
   let mut changed = false;
   changed |= copy_propagation(ir_context);
+  changed |= sccp_and_fold(ir_context, is_unsafe);
   changed |= cse(ir_context);
   changed |= licm(ir_context, is_unsafe);
   changed |= adce(ir_context, is_unsafe);
