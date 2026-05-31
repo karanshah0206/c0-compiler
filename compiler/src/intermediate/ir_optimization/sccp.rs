@@ -10,6 +10,7 @@ use crate::intermediate::{
   },
 };
 
+/// Sparse conditional constant propagation and folding.
 pub fn sccp_and_fold(ctx: &mut IRContext, is_unsafe: bool) -> bool {
   let blocks = ctx.get_blocks_mut();
   if !blocks.contains_key(&Label(0)) {

@@ -12,7 +12,7 @@ pub struct AddressClass {
   /// Temp id of the originating `alloc`/`alloc_array` instruction.
   pub alloc_id: usize,
   /// Byte offset.
-  offset: i64,
+  pub offset: i64,
 }
 
 /// Known state of a pointer temporary.

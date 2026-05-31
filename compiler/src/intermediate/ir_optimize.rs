@@ -4,7 +4,7 @@ use crate::intermediate::{
   ir_codegen::ProgramIR,
   ir_context::IRContext,
   ir_optimization::{
-    adce::*, cfg_simp::*, copy_prop::*, cse::*, licm::*, sccp::*, tail_call_elim::*,
+    adce::*, cfg_simp::*, copy_prop::*, cse::*, licm::*, sccp::*, sroa::*, tail_call_elim::*,
   },
 };
 
@@ -35,6 +35,7 @@ pub fn optimize(program: &mut ProgramIR, optimizer_level: u8, is_unsafe: bool) {
 /// Run a single pass of optimizations on a function's IR.
 fn optimize_ir(ir_context: &mut IRContext, is_unsafe: bool) -> bool {
   let mut changed = false;
+  changed |= sroa(ir_context);
   changed |= copy_propagation(ir_context);
   changed |= sccp_and_fold(ir_context, is_unsafe);
   changed |= cse(ir_context);
