@@ -145,13 +145,13 @@ pub fn strength_reduction(instrs: &mut Vec<X86Instr>) -> bool {
       })
     {
       changed = true;
-      i = 1;
+      i += 1;
       continue;
     }
 
     // simple local optimizations
     match &instrs[i] {
-      Mov(src, dst) if src == dst => changed = true,
+      Mov(src, dest) if src == dest => changed = true,
       Mov(Immediate(x86_asm::Immediate { value: 0, .. }), Register(reg)) => {
         rewritten.push(Xor(Register(*reg), Register(*reg)));
         changed = true;
