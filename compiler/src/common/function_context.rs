@@ -27,7 +27,7 @@ impl FunctionContext {
     function_context
   }
 
-  /// Clear previous param names and initialize new param list as defined
+  /// Clear previous param names and initialize new param list as defined.
   pub fn reset_params(&mut self, params: &[Variable]) {
     self.variables.clear();
     for param in params {

@@ -61,13 +61,6 @@ pub fn find_natural_loops(ctx: &IRContext, doms: &DominatorTree) -> Vec<NaturalL
 
 /// Check if an instruction inside a loop's body is pure/idempotent.
 pub fn is_loop_instr_pure(instr: &Instr, is_unsafe: bool) -> bool {
-  let get_operand_typ = |op: Operand| -> Typ {
-    match op {
-      Operand::Const((_, t)) => t,
-      Operand::Temp((_, t)) => t,
-    }
-  };
-
   !matches!(
     instr,
     Instr::Store { .. }
@@ -80,7 +73,19 @@ pub fn is_loop_instr_pure(instr: &Instr, is_unsafe: bool) -> bool {
       | Instr::JumpTo(_)
       | Instr::JumpIf { .. }
       | Instr::Label(_)
-  ) && !match instr {
+  ) && !can_instr_raise(instr, is_unsafe)
+}
+
+/// Check if an instruction may end up raising an exception.
+fn can_instr_raise(instr: &Instr, is_unsafe: bool) -> bool {
+  let get_operand_typ = |op: Operand| -> Typ {
+    match op {
+      Operand::Const((_, t)) => t,
+      Operand::Temp((_, t)) => t,
+    }
+  };
+
+  match instr {
     Instr::BinOp { op, dest, lhs, rhs } => {
       if matches!(dest.1, Typ::Pointer(_, _)) {
         if !is_unsafe

@@ -62,7 +62,7 @@ pub enum Instr {
   /// Phi node for control-flow merges
   Phi {
     dest: Temp,                  // temp that stores the resolved value
-    srcs: Vec<(Label, Operand)>, // sources (with scope) from where to resolve the dest
+    srcs: Vec<(Label, Operand)>, // sources (with scope) wherefrom to resolve the dest
   },
   /// Copy value from source operand to dest temporary
   Move { dest: Temp, src: Operand },
