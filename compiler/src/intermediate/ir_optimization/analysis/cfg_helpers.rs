@@ -112,6 +112,7 @@ pub fn get_block_labels_in_rpo(ctx: &IRContext) -> Vec<Label> {
   if ctx.get_blocks().contains_key(&Label(0)) {
     rpo_dfs_helper(ctx, Label(0), &mut visited, &mut labels);
   }
+  labels.reverse();
   labels
 }
 
