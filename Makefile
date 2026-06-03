@@ -3,7 +3,7 @@ default: release
 release:
 	cd compiler && cargo build --release
 	mkdir -p bin
-	cp compiler/target/release/compiler bin/compiler
+	cp compiler/target/release/compiler bin/c0c
 
 clean:
 	cd compiler && cargo clean
