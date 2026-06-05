@@ -21,6 +21,7 @@ pub fn generate_llvm(
   source_ast: &ProgramAST,
   program_ir: &ProgramIR,
   symbol_table: &SymbolTable,
+  allow_unsafe: bool,
 ) -> String {
   let mut function_signatures: HashMap<Ident, FunctionSignature> = HashMap::new();
 
@@ -73,8 +74,11 @@ pub fn generate_llvm(
     out.push_str("\n\n");
   }
 
+  out.push_str(&llvm_runtime_helpers());
+
   let mut needs_abort = false;
-  let mut needs_calloc = false;
+  let mut needs_raise = false;
+  let mut needs_calloc = true;
   let mut aux_counter = 0usize;
 
   for (func_name, func_ir) in program_ir {
@@ -97,8 +101,11 @@ pub fn generate_llvm(
         &ir_instr,
         &function_signatures,
         &source_defined,
+        symbol_table,
         &return_type,
+        allow_unsafe,
         &mut needs_abort,
+        &mut needs_raise,
         &mut needs_calloc,
         &mut aux_counter,
       ));
@@ -111,6 +118,8 @@ pub fn generate_llvm(
   {
     out.push_str("declare void @abort()\n");
   }
+
+  out.push_str("declare i32 @raise(i32)\n");
 
   if needs_calloc
     && (!function_signatures.contains_key("calloc")
@@ -184,8 +193,11 @@ fn generate_instr(
   instr: &Instr,
   function_signatures: &HashMap<Ident, FunctionSignature>,
   source_defined: &HashSet<&Ident>,
+  symbol_table: &SymbolTable,
   return_type: &Typ,
+  allow_unsafe: bool,
   needs_abort: &mut bool,
+  needs_raise: &mut bool,
   needs_calloc: &mut bool,
   aux_counter: &mut usize,
 ) -> String {
@@ -260,6 +272,36 @@ fn generate_instr(
         out
       }
       _ => {
+        if matches!(op, BinOp::Div | BinOp::Mod) && !allow_unsafe {
+          let lhs = emit_i32(lhs);
+          let rhs = emit_i32(rhs);
+          let llvm_op = match op {
+            BinOp::Div => "sdiv",
+            BinOp::Mod => "srem",
+            _ => unreachable!(),
+          };
+
+          return format!(
+            "\tcall void @_c0_llvm_check_div(i32 {lhs}, i32 {rhs})\n\t%t{} = {llvm_op} i32 {lhs}, {rhs}\n",
+            dest.0
+          );
+        }
+
+        if matches!(op, BinOp::Sal | BinOp::Sar) && !allow_unsafe {
+          let lhs = emit_i32(lhs);
+          let rhs = emit_i32(rhs);
+          let llvm_op = match op {
+            BinOp::Sal => "shl",
+            BinOp::Sar => "ashr",
+            _ => unreachable!(),
+          };
+
+          return format!(
+            "\tcall void @_c0_llvm_check_shift(i32 {rhs})\n\t%t{} = {llvm_op} i32 {lhs}, {rhs}\n",
+            dest.0
+          );
+        }
+
         if matches!(op, BinOp::Add | BinOp::Sub) {
           let lhs_typ = operand_type(lhs);
           let rhs_typ = operand_type(rhs);
@@ -273,7 +315,12 @@ fn generate_instr(
               unreachable!("Unsupported pointer arithmetic in LLVM lowering.")
             };
 
-            let (offset, mut prefix) = cast_to_i64(offset_op, aux_counter);
+            let ptr_typ = operand_type(ptr_op);
+            let ptr_value = emit_ptr(ptr_op);
+
+            let (offset, offset_prefix) = cast_to_i64(offset_op, aux_counter);
+            let mut prefix = offset_prefix;
+
             let offset = if negate {
               let neg_aux = format!("%aux{}", *aux_counter);
               *aux_counter += 1;
@@ -283,10 +330,42 @@ fn generate_instr(
               offset
             };
 
+            let elem_size = if matches!(ptr_typ, Typ::Array(..)) {
+              array_index_elem_size(&ptr_typ, symbol_table)
+            } else {
+              1
+            };
+
+            let scaled_offset = if elem_size == 1 {
+              offset
+            } else {
+              let scaled = format!("%aux{}", *aux_counter);
+              *aux_counter += 1;
+              prefix.push_str(&format!("\t{scaled} = mul i64 {offset}, {elem_size}\n"));
+              scaled
+            };
+
+            if allow_unsafe {
+              return format!(
+                "{prefix}\t%t{} = getelementptr inbounds i8, ptr {ptr_value}, i64 {scaled_offset}\n",
+                dest.0
+              );
+            }
+
+            if matches!(ptr_typ, Typ::Array(..)) {
+              let checked_ptr = format!("%aux{}", *aux_counter);
+              *aux_counter += 1;
+              return format!(
+                "{prefix}\t{checked_ptr} = call ptr @_c0_llvm_check_not_null(ptr {ptr_value})\n\tcall void @_c0_llvm_check_array(ptr {checked_ptr}, i64 {scaled_offset})\n\t%t{} = getelementptr inbounds i8, ptr {checked_ptr}, i64 {scaled_offset}\n",
+                dest.0
+              );
+            }
+
+            let checked_ptr = format!("%aux{}", *aux_counter);
+            *aux_counter += 1;
             return format!(
-              "{prefix}\t%t{} = getelementptr inbounds i8, ptr {}, i64 {offset}\n",
-              dest.0,
-              emit_ptr(ptr_op)
+              "{prefix}\t{checked_ptr} = call ptr @_c0_llvm_check_not_null(ptr {ptr_value})\n\t%t{} = getelementptr inbounds i8, ptr {checked_ptr}, i64 {scaled_offset}\n",
+              dest.0
             );
           }
         }
@@ -444,20 +523,36 @@ fn generate_instr(
     Instr::Load { .. } | Instr::Store { .. } | Instr::Alloc { .. } | Instr::AllocArray { .. } => {
       match instr {
         Instr::Load { dest, addr } => {
-          format!(
-            "\t%t{} = load {}, ptr {}\n",
-            dest.0,
-            llvm_type(&dest.1),
-            emit_ptr(addr)
-          )
+          let addr = emit_ptr(addr);
+          if allow_unsafe {
+            format!("\t%t{} = load {}, ptr {addr}\n", dest.0, llvm_type(&dest.1))
+          } else {
+            let checked_ptr = format!("%aux{}", *aux_counter);
+            *aux_counter += 1;
+            format!(
+              "\t{checked_ptr} = call ptr @_c0_llvm_check_not_null(ptr {addr})\n\t%t{} = load {}, ptr {checked_ptr}\n",
+              dest.0,
+              llvm_type(&dest.1)
+            )
+          }
         }
         Instr::Store { addr, src } => {
-          format!(
-            "\tstore {} {}, ptr {}\n",
-            llvm_type(&operand_type(src)),
-            emit_operand_of_typ(src, &operand_type(src)),
-            emit_ptr(addr)
-          )
+          let addr = emit_ptr(addr);
+          if allow_unsafe {
+            format!(
+              "\tstore {} {}, ptr {addr}\n",
+              llvm_type(&operand_type(src)),
+              emit_operand_of_typ(src, &operand_type(src))
+            )
+          } else {
+            let checked_ptr = format!("%aux{}", *aux_counter);
+            *aux_counter += 1;
+            format!(
+              "\t{checked_ptr} = call ptr @_c0_llvm_check_not_null(ptr {addr})\n\tstore {} {}, ptr {checked_ptr}\n",
+              llvm_type(&operand_type(src)),
+              emit_operand_of_typ(src, &operand_type(src))
+            )
+          }
         }
         Instr::Alloc { dest, size } => {
           *needs_calloc = true;
@@ -472,10 +567,17 @@ fn generate_instr(
           let (size, mut prefix): (String, String) = cast_to_i64(size, aux_counter);
           let (count, count_prefix): (String, String) = cast_to_i64(count, aux_counter);
           prefix.push_str(&count_prefix);
-          format!(
-            "{prefix}\t%t{} = call ptr @calloc(i64 {count}, i64 {size})\n",
-            dest.0
-          )
+          if allow_unsafe {
+            format!(
+              "{prefix}\t%t{} = call ptr @calloc(i64 {count}, i64 {size})\n",
+              dest.0
+            )
+          } else {
+            format!(
+              "{prefix}\t%t{} = call ptr @_c0_llvm_alloc_array(i64 {count}, i64 {size})\n",
+              dest.0
+            )
+          }
         }
         _ => unreachable!(),
       }
@@ -619,5 +721,102 @@ fn emit_ptr(op: &Operand) -> String {
       }
     }
     Operand::Temp((id, _)) => format!("%t{id}"),
+  }
+}
+
+/// Emit internal helper functions used by the LLVM backend for runtime safety.
+fn llvm_runtime_helpers() -> String {
+  let mut out = String::new();
+
+  out.push_str("define internal ptr @_c0_llvm_check_not_null(ptr %p) {\n");
+  out.push_str("L0:\n");
+  out.push_str("\t%aux0 = icmp eq ptr %p, null\n");
+  out.push_str("\tbr i1 %aux0, label %L1, label %L2\n");
+  out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
+  out.push_str("L2:\n\tret ptr %p\n");
+  out.push_str("}\n\n");
+
+  out.push_str("define internal void @_c0_llvm_check_div(i32 %lhs, i32 %rhs) {\n");
+  out.push_str("L0:\n");
+  out.push_str("\t%aux0 = icmp eq i32 %rhs, 0\n");
+  out.push_str("\t%aux1 = icmp eq i32 %rhs, -1\n");
+  out.push_str("\t%aux2 = icmp eq i32 %lhs, -2147483648\n");
+  out.push_str("\t%aux3 = and i1 %aux1, %aux2\n");
+  out.push_str("\t%aux4 = or i1 %aux0, %aux3\n");
+  out.push_str("\tbr i1 %aux4, label %L1, label %L2\n");
+  out.push_str("L1:\n\tcall i32 @raise(i32 8)\n\tunreachable\n");
+  out.push_str("L2:\n\tret void\n");
+  out.push_str("}\n\n");
+
+  out.push_str("define internal void @_c0_llvm_check_shift(i32 %rhs) {\n");
+  out.push_str("L0:\n");
+  out.push_str("\t%aux0 = icmp slt i32 %rhs, 0\n");
+  out.push_str("\t%aux1 = icmp sgt i32 %rhs, 31\n");
+  out.push_str("\t%aux2 = or i1 %aux0, %aux1\n");
+  out.push_str("\tbr i1 %aux2, label %L1, label %L2\n");
+  out.push_str("L1:\n\tcall i32 @raise(i32 8)\n\tunreachable\n");
+  out.push_str("L2:\n\tret void\n");
+  out.push_str("}\n\n");
+
+  out.push_str("define internal void @_c0_llvm_check_array(ptr %base, i64 %offset) {\n");
+  out.push_str("L0:\n");
+  out.push_str("\t%aux0 = getelementptr inbounds i8, ptr %base, i64 -8\n");
+  out.push_str("\t%aux1 = load i64, ptr %aux0\n");
+  out.push_str("\t%aux2 = icmp slt i64 %offset, 0\n");
+  out.push_str("\t%aux3 = icmp sge i64 %offset, %aux1\n");
+  out.push_str("\t%aux4 = or i1 %aux2, %aux3\n");
+  out.push_str("\tbr i1 %aux4, label %L1, label %L2\n");
+  out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
+  out.push_str("L2:\n\tret void\n");
+  out.push_str("}\n\n");
+
+  out.push_str("define internal ptr @_c0_llvm_alloc_array(i64 %count, i64 %size) {\n");
+  out.push_str("L0:\n");
+  out.push_str("\t%aux0 = icmp slt i64 %count, 0\n");
+  out.push_str("\tbr i1 %aux0, label %L1, label %L2\n");
+  out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
+  out.push_str("L2:\n");
+  out.push_str("\t%aux1 = mul i64 %count, %size\n");
+  out.push_str("\t%aux2 = add i64 %aux1, 8\n");
+  out.push_str("\t%aux3 = call ptr @calloc(i64 1, i64 %aux2)\n");
+  out.push_str("\tstore i64 %aux1, ptr %aux3\n");
+  out.push_str("\t%aux4 = getelementptr inbounds i8, ptr %aux3, i64 8\n");
+  out.push_str("\tret ptr %aux4\n");
+  out.push_str("}\n\n");
+
+  out
+}
+
+/// Compute size of the data type stored at the index of an array.
+fn array_index_elem_size(array_typ: &Typ, symbol_table: &SymbolTable) -> i64 {
+  match array_typ {
+    Typ::Array(inner, depth) => {
+      if *depth > 1 {
+        8
+      } else {
+        type_size_bytes(inner.as_ref(), symbol_table)
+      }
+    }
+    _ => unreachable!("Expected array type when evaluating array index element size."),
+  }
+}
+
+/// Get the byte-size of a type.
+fn type_size_bytes(typ: &Typ, symbol_table: &SymbolTable) -> i64 {
+  match typ {
+    Typ::Bool => 1,
+    Typ::Int => 4,
+    Typ::Pointer(..) | Typ::Array(..) => 8,
+    Typ::Struct(struct_id) => symbol_table
+      .get_struct_fields(struct_id)
+      .unwrap_or_else(|| {
+        unreachable!("Attempted size evaluation of unknown struct {struct_id} in LLVM generation.")
+      })
+      .iter()
+      .map(|(field_typ, _)| type_size_bytes(field_typ, symbol_table))
+      .sum(),
+    Typ::Void | Typ::Null | Typ::Typedef(_) => {
+      unreachable!("Attempted size evaluation of invalid type {typ} in LLVM generation.")
+    }
   }
 }

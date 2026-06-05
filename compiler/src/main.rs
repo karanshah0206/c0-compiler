@@ -156,7 +156,8 @@ fn main() {
             &header_ast,
             &source_ast,
             &program_ir,
-            &symbol_table
+            &symbol_table,
+            config.allow_unsafe
           ));
 
           if config.verbose {
