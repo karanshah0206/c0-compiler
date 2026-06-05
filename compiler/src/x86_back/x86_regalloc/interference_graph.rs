@@ -135,8 +135,8 @@ pub fn build(ctx: &IRContext, liveness: &Liveness, params_count: usize) -> Inter
       graph.add_edge(Node::Temp(i), Node::Temp(j));
     }
     if i < arg_regs.len() {
-      for j in (i + 1)..arg_regs.len() {
-        graph.add_edge(Node::Temp(i), Node::Reg(arg_regs[j]));
+      for &arg_reg in arg_regs.iter().skip(i + 1) {
+        graph.add_edge(Node::Temp(i), Node::Reg(arg_reg));
       }
     }
   }
@@ -220,12 +220,10 @@ fn process_instruction(
     rhs: Operand::Temp((rhs_id, _)),
     ..
   } = instr
+    && let Some(def) = def_temp_id
+    && def != *rhs_id
   {
-    if let Some(def) = def_temp_id
-      && def != *rhs_id
-    {
-      graph.add_edge(Node::Temp(*rhs_id), Node::Temp(def));
-    }
+    graph.add_edge(Node::Temp(*rhs_id), Node::Temp(def));
   }
 
   if let Some(def) = def_temp_id {

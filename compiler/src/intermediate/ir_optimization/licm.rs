@@ -267,7 +267,7 @@ fn are_operands_invariant(
     if let Operand::Temp((temp_id, _)) = operand
       && !hoisted.contains(temp_id)
     {
-      match defs.get(&temp_id) {
+      match defs.get(temp_id) {
         Some((def_block, _)) if body.contains(def_block) => return false,
         _ => {}
       }

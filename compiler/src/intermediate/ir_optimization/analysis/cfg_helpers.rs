@@ -123,12 +123,11 @@ fn rpo_dfs_helper(
   visited: &mut HashSet<Label>,
   labels: &mut Vec<Label>,
 ) {
-  if visited.insert(label) {
-    if let Some(block) = ctx.get_blocks().get(&label) {
+  if visited.insert(label)
+    && let Some(block) = ctx.get_blocks().get(&label) {
       for successor in get_successors_of_block(block) {
         rpo_dfs_helper(ctx, successor, visited, labels);
       }
     }
-  }
   labels.push(label);
 }

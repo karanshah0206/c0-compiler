@@ -91,11 +91,11 @@ fn traverse_dom_tree(
 
     match &instr {
       Instr::Load { dest, addr } => {
-        if let Some(key) = match alias_analysis.target_of_operand(&addr) {
+        if let Some(key) = match alias_analysis.target_of_operand(addr) {
           Some(pointer_target) => Some(pointer_target),
           None => match addr {
             Operand::Temp((id, _)) => Some(PointerTarget::Relative {
-              base: id.clone(),
+              base: *id,
               offset: 0,
             }),
             Operand::Const(_) => None,

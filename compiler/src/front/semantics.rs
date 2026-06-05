@@ -773,7 +773,9 @@ fn analyze_assign_target(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> T
     }
   }
 
-  let typ = match expr {
+  
+
+  match expr {
     Variable(var_id, typ) => {
       let function_ctx = st.get_function_context(id);
 
@@ -859,9 +861,7 @@ fn analyze_assign_target(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> T
       typ.clone().unwrap_or(Typ::Void)
     }
     _ => panic!("Invalid assignment target."),
-  };
-
-  typ
+  }
 }
 
 /// Resolve ambiguity between pointers and multiplication operation.

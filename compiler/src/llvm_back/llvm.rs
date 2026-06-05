@@ -77,7 +77,6 @@ pub fn generate_llvm(
   out.push_str(&llvm_runtime_helpers());
 
   let mut needs_abort = false;
-  let mut needs_raise = false;
   let mut needs_calloc = true;
   let mut aux_counter = 0usize;
 
@@ -105,7 +104,6 @@ pub fn generate_llvm(
         &return_type,
         allow_unsafe,
         &mut needs_abort,
-        &mut needs_raise,
         &mut needs_calloc,
         &mut aux_counter,
       ));
@@ -197,7 +195,6 @@ fn generate_instr(
   return_type: &Typ,
   allow_unsafe: bool,
   needs_abort: &mut bool,
-  needs_raise: &mut bool,
   needs_calloc: &mut bool,
   aux_counter: &mut usize,
 ) -> String {
