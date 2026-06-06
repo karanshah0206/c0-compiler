@@ -15,6 +15,123 @@ struct FunctionSignature {
   param_typs: Vec<Typ>,
 }
 
+/// Context for conditional emission of runtime helpers as required.
+struct HelpersContext {
+  needs_abort: bool,
+  needs_alloc: bool,
+  needs_alloc_array: bool,
+  needs_null_check: bool,
+  needs_div_check: bool,
+  needs_shift_check: bool,
+  needs_array_check: bool,
+}
+
+impl HelpersContext {
+  /// Generate an empty context, initializing all helpers to false.
+  fn new() -> Self {
+    HelpersContext {
+      needs_abort: false,
+      needs_alloc: false,
+      needs_alloc_array: false,
+      needs_null_check: false,
+      needs_div_check: false,
+      needs_shift_check: false,
+      needs_array_check: false,
+    }
+  }
+
+  /// Emit internal helper functions used by the LLVM backend for runtime safety.
+  fn emit(&self) -> String {
+    let mut out = String::new();
+    let mut needs_raise = false;
+
+    if self.needs_null_check {
+      needs_raise = true;
+      out.push_str("define internal ptr @_c0_llvm_check_not_null(ptr %p) {\n");
+      out.push_str("L0:\n");
+      out.push_str("\t%aux0 = icmp eq ptr %p, null\n");
+      out.push_str("\tbr i1 %aux0, label %L1, label %L2\n");
+      out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
+      out.push_str("L2:\n\tret ptr %p\n");
+      out.push_str("}\n\n");
+    }
+
+    if self.needs_div_check {
+      needs_raise = true;
+      out.push_str("define internal void @_c0_llvm_check_div(i32 %lhs, i32 %rhs) {\n");
+      out.push_str("L0:\n");
+      out.push_str("\t%aux0 = icmp eq i32 %rhs, 0\n");
+      out.push_str("\t%aux1 = icmp eq i32 %rhs, -1\n");
+      out.push_str("\t%aux2 = icmp eq i32 %lhs, -2147483648\n");
+      out.push_str("\t%aux3 = and i1 %aux1, %aux2\n");
+      out.push_str("\t%aux4 = or i1 %aux0, %aux3\n");
+      out.push_str("\tbr i1 %aux4, label %L1, label %L2\n");
+      out.push_str("L1:\n\tcall i32 @raise(i32 8)\n\tunreachable\n");
+      out.push_str("L2:\n\tret void\n");
+      out.push_str("}\n\n");
+    }
+
+    if self.needs_shift_check {
+      needs_raise = true;
+      out.push_str("define internal void @_c0_llvm_check_shift(i32 %rhs) {\n");
+      out.push_str("L0:\n");
+      out.push_str("\t%aux0 = icmp slt i32 %rhs, 0\n");
+      out.push_str("\t%aux1 = icmp sgt i32 %rhs, 31\n");
+      out.push_str("\t%aux2 = or i1 %aux0, %aux1\n");
+      out.push_str("\tbr i1 %aux2, label %L1, label %L2\n");
+      out.push_str("L1:\n\tcall i32 @raise(i32 8)\n\tunreachable\n");
+      out.push_str("L2:\n\tret void\n");
+      out.push_str("}\n\n");
+    }
+
+    if self.needs_array_check {
+      needs_raise = true;
+      out.push_str("define internal void @_c0_llvm_check_array(ptr %base, i64 %offset) {\n");
+      out.push_str("L0:\n");
+      out.push_str("\t%aux0 = getelementptr inbounds i8, ptr %base, i64 -8\n");
+      out.push_str("\t%aux1 = load i64, ptr %aux0\n");
+      out.push_str("\t%aux2 = icmp slt i64 %offset, 0\n");
+      out.push_str("\t%aux3 = icmp sge i64 %offset, %aux1\n");
+      out.push_str("\t%aux4 = or i1 %aux2, %aux3\n");
+      out.push_str("\tbr i1 %aux4, label %L1, label %L2\n");
+      out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
+      out.push_str("L2:\n\tret void\n");
+      out.push_str("}\n\n");
+    }
+
+    if self.needs_alloc_array {
+      needs_raise = true;
+      out.push_str("define internal ptr @_c0_llvm_alloc_array(i64 %count, i64 %size) {\n");
+      out.push_str("L0:\n");
+      out.push_str("\t%aux0 = icmp slt i64 %count, 0\n");
+      out.push_str("\tbr i1 %aux0, label %L1, label %L2\n");
+      out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
+      out.push_str("L2:\n");
+      out.push_str("\t%aux1 = mul i64 %count, %size\n");
+      out.push_str("\t%aux2 = add i64 %aux1, 8\n");
+      out.push_str("\t%aux3 = call ptr @calloc(i64 1, i64 %aux2)\n");
+      out.push_str("\tstore i64 %aux1, ptr %aux3\n");
+      out.push_str("\t%aux4 = getelementptr inbounds i8, ptr %aux3, i64 8\n");
+      out.push_str("\tret ptr %aux4\n");
+      out.push_str("}\n\n");
+    }
+
+    if needs_raise {
+      out.push_str("declare i32 @raise(i32)\n");
+    }
+
+    if self.needs_abort {
+      out.push_str("declare void @abort()\n");
+    }
+
+    if self.needs_alloc {
+      out.push_str("declare ptr @calloc(i64, i64)\n");
+    }
+
+    out
+  }
+}
+
 /// Generate an emittable LLVM IR string.
 pub fn generate_llvm(
   header_ast: &ProgramAST,
@@ -40,7 +157,6 @@ pub fn generate_llvm(
     .collect::<HashSet<_>>();
 
   let mut out = String::new();
-  out.push_str("; C0 Compiler\n\n");
 
   let struct_defs = collect_struct_definitions(header_ast, source_ast);
   if !struct_defs.is_empty() {
@@ -74,10 +190,7 @@ pub fn generate_llvm(
     out.push_str("\n\n");
   }
 
-  out.push_str(&llvm_runtime_helpers());
-
-  let mut needs_abort = false;
-  let mut needs_calloc = true;
+  let mut helpers_ctx = HelpersContext::new();
   let mut aux_counter = 0usize;
 
   for (func_name, func_ir) in program_ir {
@@ -103,28 +216,28 @@ pub fn generate_llvm(
         symbol_table,
         &return_type,
         allow_unsafe,
-        &mut needs_abort,
-        &mut needs_calloc,
+        &mut helpers_ctx,
         &mut aux_counter,
       ));
     }
     out.push_str("}\n\n");
   }
 
-  if needs_abort
-    && (!function_signatures.contains_key("abort") || source_defined.contains(&"abort".to_string()))
+  if helpers_ctx.needs_abort
+    && function_signatures.contains_key("abort")
+    && !source_defined.contains(&"abort".to_string())
   {
-    out.push_str("declare void @abort()\n");
+    helpers_ctx.needs_abort = false;
   }
 
-  out.push_str("declare i32 @raise(i32)\n");
-
-  if needs_calloc
-    && (!function_signatures.contains_key("calloc")
-      || source_defined.contains(&"calloc".to_string()))
+  if helpers_ctx.needs_alloc
+    && function_signatures.contains_key("calloc")
+    && !source_defined.contains(&"calloc".to_string())
   {
-    out.push_str("declare ptr @calloc(i64, i64)\n");
+    helpers_ctx.needs_alloc = false;
   }
+
+  out.push_str(&helpers_ctx.emit());
 
   out
 }
@@ -194,8 +307,7 @@ fn generate_instr(
   symbol_table: &SymbolTable,
   return_type: &Typ,
   allow_unsafe: bool,
-  needs_abort: &mut bool,
-  needs_calloc: &mut bool,
+  helpers_ctx: &mut HelpersContext,
   aux_counter: &mut usize,
 ) -> String {
   match instr {
@@ -277,6 +389,7 @@ fn generate_instr(
             BinOp::Mod => "srem",
             _ => unreachable!(),
           };
+          helpers_ctx.needs_div_check = true;
 
           return format!(
             "\tcall void @_c0_llvm_check_div(i32 {lhs}, i32 {rhs})\n\t%t{} = {llvm_op} i32 {lhs}, {rhs}\n",
@@ -292,6 +405,7 @@ fn generate_instr(
             BinOp::Sar => "ashr",
             _ => unreachable!(),
           };
+          helpers_ctx.needs_shift_check = true;
 
           return format!(
             "\tcall void @_c0_llvm_check_shift(i32 {rhs})\n\t%t{} = {llvm_op} i32 {lhs}, {rhs}\n",
@@ -349,7 +463,10 @@ fn generate_instr(
               );
             }
 
+            helpers_ctx.needs_null_check = true;
+
             if matches!(ptr_typ, Typ::Array(..)) {
+              helpers_ctx.needs_array_check = true;
               let checked_ptr = format!("%aux{}", *aux_counter);
               *aux_counter += 1;
               return format!(
@@ -484,7 +601,7 @@ fn generate_instr(
     },
     Instr::Throw(exception) => match exception {
       Exception::Abort => {
-        *needs_abort = true;
+        helpers_ctx.needs_abort = true;
         "\tcall void @abort()\n\tunreachable\n".to_string()
       }
     },
@@ -525,6 +642,7 @@ fn generate_instr(
             format!("\t%t{} = load {}, ptr {addr}\n", dest.0, llvm_type(&dest.1))
           } else {
             let checked_ptr = format!("%aux{}", *aux_counter);
+            helpers_ctx.needs_null_check = true;
             *aux_counter += 1;
             format!(
               "\t{checked_ptr} = call ptr @_c0_llvm_check_not_null(ptr {addr})\n\t%t{} = load {}, ptr {checked_ptr}\n",
@@ -543,6 +661,7 @@ fn generate_instr(
             )
           } else {
             let checked_ptr = format!("%aux{}", *aux_counter);
+            helpers_ctx.needs_null_check = true;
             *aux_counter += 1;
             format!(
               "\t{checked_ptr} = call ptr @_c0_llvm_check_not_null(ptr {addr})\n\tstore {} {}, ptr {checked_ptr}\n",
@@ -552,7 +671,7 @@ fn generate_instr(
           }
         }
         Instr::Alloc { dest, size } => {
-          *needs_calloc = true;
+          helpers_ctx.needs_alloc = true;
           let (size, prefix) = cast_to_i64(size, aux_counter);
           format!(
             "{prefix}\t%t{} = call ptr @calloc(i64 1, i64 {size})\n",
@@ -560,7 +679,7 @@ fn generate_instr(
           )
         }
         Instr::AllocArray { dest, size, count } => {
-          *needs_calloc = true;
+          helpers_ctx.needs_alloc = true;
           let (size, mut prefix): (String, String) = cast_to_i64(size, aux_counter);
           let (count, count_prefix): (String, String) = cast_to_i64(count, aux_counter);
           prefix.push_str(&count_prefix);
@@ -570,6 +689,7 @@ fn generate_instr(
               dest.0
             )
           } else {
+            helpers_ctx.needs_alloc_array = true;
             format!(
               "{prefix}\t%t{} = call ptr @_c0_llvm_alloc_array(i64 {count}, i64 {size})\n",
               dest.0
@@ -719,69 +839,6 @@ fn emit_ptr(op: &Operand) -> String {
     }
     Operand::Temp((id, _)) => format!("%t{id}"),
   }
-}
-
-/// Emit internal helper functions used by the LLVM backend for runtime safety.
-fn llvm_runtime_helpers() -> String {
-  let mut out = String::new();
-
-  out.push_str("define internal ptr @_c0_llvm_check_not_null(ptr %p) {\n");
-  out.push_str("L0:\n");
-  out.push_str("\t%aux0 = icmp eq ptr %p, null\n");
-  out.push_str("\tbr i1 %aux0, label %L1, label %L2\n");
-  out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
-  out.push_str("L2:\n\tret ptr %p\n");
-  out.push_str("}\n\n");
-
-  out.push_str("define internal void @_c0_llvm_check_div(i32 %lhs, i32 %rhs) {\n");
-  out.push_str("L0:\n");
-  out.push_str("\t%aux0 = icmp eq i32 %rhs, 0\n");
-  out.push_str("\t%aux1 = icmp eq i32 %rhs, -1\n");
-  out.push_str("\t%aux2 = icmp eq i32 %lhs, -2147483648\n");
-  out.push_str("\t%aux3 = and i1 %aux1, %aux2\n");
-  out.push_str("\t%aux4 = or i1 %aux0, %aux3\n");
-  out.push_str("\tbr i1 %aux4, label %L1, label %L2\n");
-  out.push_str("L1:\n\tcall i32 @raise(i32 8)\n\tunreachable\n");
-  out.push_str("L2:\n\tret void\n");
-  out.push_str("}\n\n");
-
-  out.push_str("define internal void @_c0_llvm_check_shift(i32 %rhs) {\n");
-  out.push_str("L0:\n");
-  out.push_str("\t%aux0 = icmp slt i32 %rhs, 0\n");
-  out.push_str("\t%aux1 = icmp sgt i32 %rhs, 31\n");
-  out.push_str("\t%aux2 = or i1 %aux0, %aux1\n");
-  out.push_str("\tbr i1 %aux2, label %L1, label %L2\n");
-  out.push_str("L1:\n\tcall i32 @raise(i32 8)\n\tunreachable\n");
-  out.push_str("L2:\n\tret void\n");
-  out.push_str("}\n\n");
-
-  out.push_str("define internal void @_c0_llvm_check_array(ptr %base, i64 %offset) {\n");
-  out.push_str("L0:\n");
-  out.push_str("\t%aux0 = getelementptr inbounds i8, ptr %base, i64 -8\n");
-  out.push_str("\t%aux1 = load i64, ptr %aux0\n");
-  out.push_str("\t%aux2 = icmp slt i64 %offset, 0\n");
-  out.push_str("\t%aux3 = icmp sge i64 %offset, %aux1\n");
-  out.push_str("\t%aux4 = or i1 %aux2, %aux3\n");
-  out.push_str("\tbr i1 %aux4, label %L1, label %L2\n");
-  out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
-  out.push_str("L2:\n\tret void\n");
-  out.push_str("}\n\n");
-
-  out.push_str("define internal ptr @_c0_llvm_alloc_array(i64 %count, i64 %size) {\n");
-  out.push_str("L0:\n");
-  out.push_str("\t%aux0 = icmp slt i64 %count, 0\n");
-  out.push_str("\tbr i1 %aux0, label %L1, label %L2\n");
-  out.push_str("L1:\n\tcall i32 @raise(i32 12)\n\tunreachable\n");
-  out.push_str("L2:\n");
-  out.push_str("\t%aux1 = mul i64 %count, %size\n");
-  out.push_str("\t%aux2 = add i64 %aux1, 8\n");
-  out.push_str("\t%aux3 = call ptr @calloc(i64 1, i64 %aux2)\n");
-  out.push_str("\tstore i64 %aux1, ptr %aux3\n");
-  out.push_str("\t%aux4 = getelementptr inbounds i8, ptr %aux3, i64 8\n");
-  out.push_str("\tret ptr %aux4\n");
-  out.push_str("}\n\n");
-
-  out
 }
 
 /// Compute size of the data type stored at the index of an array.

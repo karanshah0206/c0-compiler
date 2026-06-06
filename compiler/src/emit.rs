@@ -11,11 +11,12 @@ pub fn emit_ir(filename: String, program_ir: ProgramIR, symbol_table: SymbolTabl
   let mut writer = BufWriter::new(file);
 
   writeln!(writer, "// C0 Compiler")?;
-  writeln!(writer)?;
+  writeln!(writer, "// {filename:?}")?;
 
   for (func_name, func_ir) in program_ir {
     let (ret_typ, params) = symbol_table.get_function_signature(&func_name).unwrap();
 
+    writeln!(writer)?;
     writeln!(writer, "// Function: {func_name}")?;
     writeln!(writer, "// Parameter Types: {:?}", params)?;
     writeln!(writer, "// Return Type: {:?}", ret_typ)?;
@@ -25,7 +26,6 @@ pub fn emit_ir(filename: String, program_ir: ProgramIR, symbol_table: SymbolTabl
       }
       writeln!(writer, "{}", ir_instr)?;
     }
-    writeln!(writer)?;
   }
 
   Ok(())
@@ -62,6 +62,7 @@ pub fn emit_llvm(filename: String, llvm_str: String) -> Result<()> {
   let file = File::create(format!("{filename}.ll")).unwrap();
   let mut writer = BufWriter::new(file);
   writeln!(writer, "; C0 Compiler")?;
+  writeln!(writer, "; {filename:?}")?;
   writeln!(writer)?;
   write!(writer, "{llvm_str}")?;
   Ok(())
