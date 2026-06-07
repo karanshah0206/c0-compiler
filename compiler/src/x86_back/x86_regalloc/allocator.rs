@@ -555,7 +555,7 @@ impl Allocator {
 
   /// Build and return the final vector mapping `temp_id`s to colors/spill.
   fn build_coloring(&self, temps_count: usize) -> Vec<Color> {
-    let mut coloring = vec![SPILL; temps_count];
+    let mut coloring = vec![UNCOLORED; temps_count];
 
     for (node, &color) in &self.color {
       if let Node::Temp(temp_id) = *node
@@ -596,11 +596,5 @@ pub fn allocate_function(ctx: &mut IRContext, params_count: usize) -> Vec<Color>
   let mut allocator = Allocator::new(graph);
   allocator.run();
 
-  let mut coloring = allocator.build_coloring(ctx.get_temps_count());
-  for color in coloring.iter_mut() {
-    if *color == 0 {
-      *color = SPILL;
-    }
-  }
-  coloring
+  allocator.build_coloring(ctx.get_temps_count())
 }

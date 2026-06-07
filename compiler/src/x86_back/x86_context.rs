@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::front::ast::{BinOp, Typ, UnOp};
 use crate::intermediate::{
-  ir_asm::{Operand, Temp},
+  ir_asm::{Instr, Operand, Temp},
   ir_context::IRContext,
 };
 use crate::x86_back::{
@@ -109,6 +109,21 @@ impl X86Context {
       label_prefix,
     };
 
+    let mut needs_stack_alignment = false;
+    for (_, block) in ir_context.get_blocks() {
+      if block
+        .body
+        .iter()
+        .any(|instr| matches!(instr, Instr::Call { .. }))
+      {
+        needs_stack_alignment = true;
+        break;
+      } else if matches!(block.terminator, Some(Instr::Call { .. })) {
+        needs_stack_alignment = true;
+        break;
+      }
+    }
+
     let arg_regs = X86Reg::call_argument();
     let stack_depth = spill_slot_count * STACK_SLOT_WIDTH;
 
@@ -117,10 +132,9 @@ impl X86Context {
     }
 
     // determine callee-saved registers used in this context
-    for (temp_id, &allocation) in ctx.regalloc.iter().enumerate() {
+    for (_, &allocation) in ctx.regalloc.iter().enumerate() {
       match allocation {
-        UNCOLORED => unreachable!("Found uncolored argument temporary with id {temp_id}."),
-        SPILL => {}
+        UNCOLORED | SPILL => {}
         color => {
           let register = color_to_register(color);
           if X86Reg::callee_saved().contains(&register) {
@@ -132,18 +146,20 @@ impl X86Context {
 
     // determine stack frame size with alignment
     ctx.frame_size = ctx.used_callee_saved.len() * STACK_SLOT_WIDTH + stack_depth;
-    if ctx.frame_size.is_multiple_of(STACK_ALIGNMENT) {
+    if ctx.frame_size.is_multiple_of(STACK_ALIGNMENT) && needs_stack_alignment {
       ctx.frame_size += STACK_SLOT_WIDTH;
     }
 
     // allocate stack frame
-    ctx.instructions.push(X86Instr::Sub(
-      X86Operand::Immediate(Immediate {
-        value: ctx.frame_size as i64,
-        width: W64,
-      }),
-      X86Operand::Register(X86WReg::stack_pointer()),
-    ));
+    if ctx.frame_size > 0 {
+      ctx.instructions.push(X86Instr::Sub(
+        X86Operand::Immediate(Immediate {
+          value: ctx.frame_size as i64,
+          width: W64,
+        }),
+        X86Operand::Register(X86WReg::stack_pointer()),
+      ));
+    }
 
     // save callee-saved registers
     for (index, &register) in ctx.used_callee_saved.clone().iter().enumerate() {

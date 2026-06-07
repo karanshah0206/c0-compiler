@@ -145,12 +145,16 @@ pub fn allocate_spill_slots(
     assigned_slots.insert(temp_id, slot);
   }
 
-  let spill_slot_count = assigned_slots
-    .values()
-    .copied()
-    .max()
-    .map(|slot| slot + 1)
-    .unwrap_or(0);
+  let spill_slot_count = if assigned_slots.is_empty() {
+    0
+  } else {
+    assigned_slots
+      .values()
+      .copied()
+      .max()
+      .map(|slot| slot + 1)
+      .unwrap_or(0)
+  };
 
   let stack_allocation = assigned_slots
     .into_iter()
