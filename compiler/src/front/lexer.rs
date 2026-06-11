@@ -131,6 +131,8 @@ pub enum Token<'a> {
   Int,
   #[token("bool")]
   Bool,
+  #[token("char")]
+  Char,
   #[token("void")]
   Void,
   #[token("typedef")]
@@ -162,6 +164,8 @@ pub enum Token<'a> {
   True,
   #[token("false")]
   False,
+  #[regex(r##"'(?:[^'\\]|\\['\"\\ntrfabv0])'"##, parse_char_literal)]
+  CharLit(i8),
   #[token("NULL")]
   Null,
 
@@ -172,7 +176,6 @@ pub enum Token<'a> {
   // keywords reserved for future use
   #[token("break")]
   #[token("continue")]
-  #[token("char")]
   #[token("string")]
   Error,
 }
@@ -180,6 +183,40 @@ pub enum Token<'a> {
 impl Display for Token<'_> {
   fn fmt(&self, fmt: &mut Formatter<'_>) -> Result {
     write!(fmt, "{:#?}", self)
+  }
+}
+
+/// Parse a character literal token (e.g. `'a'`, `'\n'`).
+fn parse_char_literal<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> i8 {
+  let slice = lex.slice();
+  let inner = &slice[1..slice.len() - 1];
+
+  if inner.len() == 1 {
+    let byte = inner.as_bytes()[0];
+    assert!(
+      (32..=126).contains(&byte),
+      "Character literal must be a printable ASCII character or an escape sequence."
+    );
+    return byte as i8;
+  }
+
+  assert!(
+    inner.starts_with('\\'),
+    "Invalid character literal {slice}."
+  );
+  match inner.as_bytes()[1] {
+    b't' => 9,
+    b'r' => 13,
+    b'f' => 12,
+    b'a' => 7,
+    b'b' => 8,
+    b'n' => 10,
+    b'v' => 11,
+    b'\'' => 39,
+    b'"' => 34,
+    b'0' => 0,
+    b'\\' => 92,
+    escaped => unreachable!("Invalid character escape \\{escaped} in literal {slice}."),
   }
 }
 
