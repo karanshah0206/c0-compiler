@@ -214,7 +214,7 @@ impl SymbolTable {
           unreachable!("Unknown identifier {id}");
         }
       }
-      Typ::Struct(_) | Typ::Bool | Typ::Int | Typ::Null | Typ::Void => typ,
+      Typ::Struct(_) | Typ::Bool | Typ::Char | Typ::Int | Typ::Null | Typ::Void => typ,
     }
   }
 
@@ -292,7 +292,13 @@ impl SymbolTable {
         !matches!(inner.as_ref(), Typ::Void | Typ::Null | Typ::Typedef(_))
           && Self::is_pointer_legal(inner)
       }
-      Typ::Bool | Typ::Int | Typ::Null | Typ::Void | Typ::Struct(_) | Typ::Typedef(_) => true,
+      Typ::Bool
+      | Typ::Char
+      | Typ::Int
+      | Typ::Null
+      | Typ::Void
+      | Typ::Struct(_)
+      | Typ::Typedef(_) => true,
     }
   }
 }
