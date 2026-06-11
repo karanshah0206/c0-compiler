@@ -622,6 +622,7 @@ fn array_index_elem_size(array_typ: &Typ, symbol_table: &SymbolTable) -> i64 {
 fn type_size_bytes(typ: &Typ, symbol_table: &SymbolTable) -> i64 {
   match typ {
     Typ::Bool => 1,
+    Typ::Char => 1,
     Typ::Int => 4,
     Typ::Pointer(..) | Typ::Array(..) => 8,
     Typ::Struct(struct_id) => symbol_table
@@ -642,6 +643,7 @@ fn type_size_bytes(typ: &Typ, symbol_table: &SymbolTable) -> i64 {
 fn return_type_width(typ: Typ) -> Width {
   match typ {
     Typ::Bool => W8,
+    Typ::Char => W8,
     Typ::Int => W32,
     Typ::Null | Typ::Pointer(..) | Typ::Array(..) => W64,
     Typ::Void | Typ::Typedef(_) | Typ::Struct(_) => {

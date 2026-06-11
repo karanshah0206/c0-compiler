@@ -110,7 +110,7 @@ impl X86Context {
     };
 
     let mut needs_stack_alignment = false;
-    for (_, block) in ir_context.get_blocks() {
+    for block in ir_context.get_blocks().values() {
       if block
         .body
         .iter()
@@ -132,7 +132,7 @@ impl X86Context {
     }
 
     // determine callee-saved registers used in this context
-    for (_, &allocation) in ctx.regalloc.iter().enumerate() {
+    for &allocation in ctx.regalloc.iter() {
       match allocation {
         UNCOLORED | SPILL => {}
         color => {
@@ -850,6 +850,7 @@ impl X86Context {
 fn width_for_type(typ: &Typ) -> Width {
   match typ {
     Typ::Bool => W8,
+    Typ::Char => W8,
     Typ::Int => W32,
     Typ::Null | Typ::Pointer(..) | Typ::Array(..) => W64,
     Typ::Void | Typ::Typedef(_) | Typ::Struct(_) => {
