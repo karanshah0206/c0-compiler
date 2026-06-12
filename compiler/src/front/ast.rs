@@ -20,6 +20,8 @@ pub enum Typ {
   Int,
   /// 8-bit boolean
   Bool,
+  /// 8-bit character
+  Char,
   /// Ordered set of field variables (identifier)
   Struct(Ident),
   /// Contiguous sized memory block (type, dimensions)
@@ -79,6 +81,8 @@ pub enum Expr {
   Number(i64),
   /// Boolean immediate
   Bool(bool),
+  /// Character immediate
+  Char(i8),
   /// Null-pointer
   Null,
   /// Variable identifier
@@ -111,6 +115,7 @@ impl Expr {
     match self {
       Number(_) => Typ::Int,
       Bool(_) => Typ::Bool,
+      Char(_) => Typ::Char,
       Null => Typ::Null,
       Variable(_, typ)
       | Binop(_, _, _, typ)
@@ -276,6 +281,7 @@ impl Display for Typ {
       Void => write!(fmt, "void"),
       Int => write!(fmt, "int"),
       Bool => write!(fmt, "bool"),
+      Char => write!(fmt, "char"),
       Null => write!(fmt, "NULL"),
       Struct(id) => write!(fmt, "struct {id}"),
       Array(typ, dimensions) => {
@@ -351,6 +357,7 @@ impl Display for Expr {
     match self {
       Expr::Number(value) => write!(fmt, "Number({value})"),
       Expr::Bool(value) => write!(fmt, "Bool({value})"),
+      Expr::Char(value) => write!(fmt, "Char({value})"),
       Expr::Null => write!(fmt, "NULL"),
       Expr::Variable(id, typ) => write!(fmt, "Variable(\"{id}\", {})", fmt_opt_typ(typ)),
       Expr::Binop(lhs, op, rhs, typ) => {

@@ -32,6 +32,7 @@ enum KeyOp {
 enum TypeTag {
   Int,
   Bool,
+  Char,
   Other,
 }
 
@@ -40,6 +41,7 @@ impl From<&Typ> for TypeTag {
     match t {
       Typ::Int => TypeTag::Int,
       Typ::Bool => TypeTag::Bool,
+      Typ::Char => TypeTag::Char,
       _ => TypeTag::Other,
     }
   }

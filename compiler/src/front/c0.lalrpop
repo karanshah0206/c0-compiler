@@ -67,6 +67,8 @@ extern {
     "void" => Token::Void,
     "int" => Token::Int,
     "bool" => Token::Bool,
+    "char" => Token::Char,
+    "charlit" => Token::CharLit(<i8>),
     "typedef" => Token::Typedef,
     "struct" => Token::Struct,
 
@@ -133,6 +135,7 @@ TDefn : GlobalDeclaration = {
 BaseType : Typ = {
   "int" => Typ::Int,
   "bool" => Typ::Bool,
+  "char" => Typ::Char,
   "struct" <i : Ident> => Typ::Struct(i),
 };
 
@@ -258,6 +261,11 @@ Number : i64 = {
 Boolean : bool = {
   "true" => true,
   "false" => false,
+};
+
+/// Character immediate
+CharLit : i8 = {
+  <c : "charlit"> => c,
 };
 
 /// Identifier
@@ -505,6 +513,7 @@ PrimaryNoIdent : Expr = {
   "(" <Expr> ")" => <>,
   <n : Number> => Expr::Number(n),
   <b : Boolean> => Expr::Bool(b),
+  <c : CharLit> => Expr::Char(c),
   "null" => Expr::Null,
   "alloc" "(" <t : Type> ")" => Expr::Alloc(t, None),
   "alloc_array" "(" <t : Type> "," <e : Expr> ")" => Expr::AllocArray(t, Box::new(e), None),

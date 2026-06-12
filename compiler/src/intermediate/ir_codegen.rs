@@ -330,6 +330,7 @@ fn munch_expression(expr: &Expr, ctx: &mut IRContext, st: &SymbolTable) -> Opera
   match expr {
     Expr::Number(number) => Operand::Const((*number, Typ::Int)),
     Expr::Bool(boolean) => Operand::Const((if *boolean { 1 } else { 0 }, Typ::Bool)),
+    Expr::Char(character) => Operand::Const((*character as i64, Typ::Char)),
     Expr::Null => Operand::Const((0, Typ::Pointer(Box::new(Typ::Int), 1))),
     Expr::Variable(var_id, _) => Operand::Temp(ctx.read_variable(var_id, ctx.current_block_label)),
     Expr::Binop(lhs, bin_op, rhs, typ) => match bin_op {
@@ -622,6 +623,7 @@ fn type_size_bytes_cached(
   match typ {
     Typ::Int => 4,
     Typ::Bool => 1,
+    Typ::Char => 1,
     Typ::Pointer(..) | Typ::Array(..) => 8,
     Typ::Struct(struct_id) => {
       if let Some(cached_size) = struct_size_cache.get(struct_id) {

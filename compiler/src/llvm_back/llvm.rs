@@ -294,6 +294,7 @@ fn llvm_type(typ: &Typ) -> &'static str {
     Typ::Void => "void",
     Typ::Int => "i32",
     Typ::Bool => "i1",
+    Typ::Char => "i8",
     Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(..) => "ptr",
     Typ::Typedef(_) => unreachable!("Unresolved typedefs found in LLVM backend."),
   }
@@ -355,6 +356,25 @@ fn generate_instr(
             dest.0,
             emit_i1(lhs),
             emit_i1(rhs)
+          );
+        }
+
+        if matches!(operand_type(lhs), Typ::Char) && matches!(operand_type(rhs), Typ::Char) {
+          let llvm_op = match op {
+            BinOp::CmpEq => "eq",
+            BinOp::CmpNeq => "ne",
+            BinOp::Lt => "slt",
+            BinOp::Gt => "sgt",
+            BinOp::Lte => "sle",
+            BinOp::Gte => "sge",
+            _ => unreachable!(),
+          };
+
+          return format!(
+            "\t%t{} = icmp {llvm_op} i8 {}, {}\n",
+            dest.0,
+            emit_i8(lhs),
+            emit_i8(rhs)
           );
         }
 
@@ -624,6 +644,7 @@ fn generate_instr(
       let src = emit_operand_of_typ(src, &dest.1);
       match &dest.1 {
         Typ::Bool => format!("\t%t{} = or i1 {src}, false\n", dest.0).to_string(),
+        Typ::Char => format!("\t%t{} = add i8 {src}, 0\n", dest.0).to_string(),
         Typ::Int => format!("\t%t{} = add i32 {src}, 0\n", dest.0).to_string(),
         Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(..) => {
           format!("\t%t{} = select i1 true, ptr {src}, ptr null\n", dest.0)
@@ -706,6 +727,7 @@ fn generate_instr(
 fn emit_operand_of_typ(op: &Operand, typ: &Typ) -> String {
   match typ {
     Typ::Bool => emit_i1(op),
+    Typ::Char => emit_i8(op),
     Typ::Int => emit_i32(op),
     Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(..) => emit_ptr(op),
     Typ::Void => unreachable!("Typechecker erroneously allows operands to be of type void."),
@@ -723,7 +745,7 @@ fn emit_const_of_typ(value: i64, typ: &Typ) -> String {
         "true".to_string()
       }
     }
-    Typ::Int => value.to_string(),
+    Typ::Int | Typ::Char => value.to_string(),
     Typ::Null | Typ::Pointer(..) | Typ::Array(..) | Typ::Struct(..) => "null".to_string(),
     Typ::Void => {
       unreachable!("Typechecker erroneously permits constants assigned to the void type.")
@@ -747,6 +769,17 @@ fn emit_i1(op: &Operand) -> String {
       _ => {
         unreachable!("Typechecker erroneously allows non-bool expressions where unacceptable.")
       }
+    },
+  }
+}
+
+/// Stringify a character operand.
+fn emit_i8(op: &Operand) -> String {
+  match op {
+    Operand::Const((value, _)) => value.to_string(),
+    Operand::Temp((id, typ)) => match typ {
+      Typ::Char => format!("%t{}", id),
+      _ => unreachable!("Typechecker erroneously allows non-char expressions where unacceptable."),
     },
   }
 }
@@ -859,6 +892,7 @@ fn array_index_elem_size(array_typ: &Typ, symbol_table: &SymbolTable) -> i64 {
 fn type_size_bytes(typ: &Typ, symbol_table: &SymbolTable) -> i64 {
   match typ {
     Typ::Bool => 1,
+    Typ::Char => 1,
     Typ::Int => 4,
     Typ::Pointer(..) | Typ::Array(..) => 8,
     Typ::Struct(struct_id) => symbol_table

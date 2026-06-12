@@ -102,10 +102,12 @@ fn collect_use_patches(
   let mut patches: Vec<(usize, Typ)> = Vec::new();
   let mut visit = |op: &Operand| {
     if let Operand::Temp((id, typ)) = op
-      && spilt.contains(id) && seen.insert(*id) {
-        let typ = temp_types.get(id).cloned().unwrap_or_else(|| typ.clone());
-        patches.push((*id, typ));
-      }
+      && spilt.contains(id)
+      && seen.insert(*id)
+    {
+      let typ = temp_types.get(id).cloned().unwrap_or_else(|| typ.clone());
+      patches.push((*id, typ));
+    }
   };
 
   match instr {
@@ -177,9 +179,10 @@ fn collect_def_patch(
 fn apply_use_patches(instr: &mut Instr, use_map: &HashMap<usize, Temp>) {
   let patch = |op: &mut Operand| {
     if let Operand::Temp((id, _)) = op
-      && let Some(fresh) = use_map.get(id) {
-        *op = Operand::Temp(fresh.clone());
-      }
+      && let Some(fresh) = use_map.get(id)
+    {
+      *op = Operand::Temp(fresh.clone());
+    }
   };
 
   match instr {

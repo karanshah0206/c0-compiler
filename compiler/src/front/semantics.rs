@@ -469,7 +469,13 @@ fn analyze_stmt(id: &Ident, stmt: &mut Stmt, st: &mut SymbolTable) -> TcResult {
             Expr::Call(..) | Expr::Alloc(..) | Expr::AllocArray(..)
           ) || matches!(
             expr.get_type(),
-            Typ::Int | Typ::Bool | Typ::Pointer(..) | Typ::Array(..) | Typ::Null | Typ::Void
+            Typ::Int
+              | Typ::Bool
+              | Typ::Char
+              | Typ::Pointer(..)
+              | Typ::Array(..)
+              | Typ::Null
+              | Typ::Void
           ),
           "Bad expression statement {expr}."
         );
@@ -488,6 +494,7 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
   match expr {
     Number(_) => TcResult::ok(),
     Bool(_) => TcResult::ok(),
+    Char(_) => TcResult::ok(),
     Null => TcResult::ok(),
     Variable(var_id, typ) => {
       // variable in the source code
@@ -548,8 +555,8 @@ fn analyze_expr(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> TcResult {
         }
         BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
           assert!(
-            e_typ == Typ::Int,
-            "Binary operator {bin_op} expected int but got {e_typ}."
+            e_typ == Typ::Int || e_typ == Typ::Char,
+            "Binary operator {bin_op} expected int or char but got {e_typ}."
           );
           Some(Typ::Bool)
         }
@@ -773,8 +780,6 @@ fn analyze_assign_target(id: &Ident, expr: &mut Expr, st: &mut SymbolTable) -> T
     }
   }
 
-  
-
   match expr {
     Variable(var_id, typ) => {
       let function_ctx = st.get_function_context(id);
@@ -902,7 +907,7 @@ fn get_pointer_var_depth(expr: &Expr) -> Option<(Ident, usize)> {
 /// Helper to check whether a variable can be of given type.
 fn is_var_type_valid(typ: &Typ) -> bool {
   match typ {
-    Typ::Int | Typ::Bool => true,
+    Typ::Int | Typ::Bool | Typ::Char => true,
     Typ::Array(inner, _) | Typ::Pointer(inner, _) => is_ptr_type_valid(inner),
     Typ::Void | Typ::Null | Typ::Typedef(_) | Typ::Struct(_) => false,
   }
@@ -914,7 +919,7 @@ fn is_ptr_type_valid(typ: &Typ) -> bool {
 
   loop {
     match cur {
-      Typ::Int | Typ::Bool | Typ::Struct(_) => return true,
+      Typ::Int | Typ::Bool | Typ::Char | Typ::Struct(_) => return true,
       Typ::Array(inner, _) | Typ::Pointer(inner, _) => cur = inner.as_ref(),
       Typ::Void | Typ::Null | Typ::Typedef(_) => return false,
     }
